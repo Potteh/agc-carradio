@@ -421,6 +421,29 @@ RegisterNetEvent('acg_radio:server:requestState', function(request)
     TriggerClientEvent('acg_radio:client:syncState', playerSource, BuildSnapshot(networkId, state))
 end)
 
+RegisterNetEvent('acg_radio:server:requestActiveRadios', function()
+    local playerSource = source
+    if type(playerSource) ~= 'number'
+        or playerSource <= 0
+        or not GetPlayerName(playerSource)
+        or not QBCore.Functions.GetPlayer(playerSource) then
+        return
+    end
+
+    if IsRateLimited(playerSource, 'requestActiveRadios') then
+        return
+    end
+
+    local snapshots = {}
+    for networkId, state in pairs(VehicleRadios) do
+        if state.source == 'youtube' then
+            snapshots[#snapshots + 1] = BuildSnapshot(networkId, state)
+        end
+    end
+
+    TriggerClientEvent('acg_radio:client:activeRadios', playerSource, snapshots)
+end)
+
 CreateThread(function()
     while true do
         Wait(Config.Sync.StateCleanupInterval)
@@ -429,6 +452,7 @@ CreateThread(function()
             local vehicle = NetworkGetEntityFromNetworkId(networkId)
             if vehicle == 0 or not DoesEntityExist(vehicle) or state.vehicleEntity ~= vehicle then
                 VehicleRadios[networkId] = nil
+                TriggerClientEvent('acg_radio:client:removeRadio', -1, networkId)
                 DebugPrint(('cleanup vehicle=%s'):format(networkId))
             end
         end

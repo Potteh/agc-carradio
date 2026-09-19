@@ -32,6 +32,7 @@ let provisionalVideoId = null;
 let currentTitle = '';
 let pendingRadioState = null;
 let activeRadioState = null;
+let localEffectiveVolume = 0;
 let debugEnabled = false;
 let maxVolume = 100;
 let driftTimer = null;
@@ -575,6 +576,7 @@ function stopYouTube() {
     provisionalVideoId = null;
     currentTitle = '';
     autoplayBlocked = false;
+    localEffectiveVolume = 0;
 
     if (youtubePlayerReady && youtubePlayer) {
         youtubePlayer.stopVideo();
@@ -673,6 +675,10 @@ function applyRadioState(rawState, force = false) {
     const videoId = VIDEO_ID_PATTERN.test(rawState.videoId || '') ? rawState.videoId : null;
     const position = Math.max(0, Number(rawState.position) || 0);
     const volume = clamp(Number(rawState.volume) || 0, 0, maxVolume);
+    const requestedLocalVolume = Number(rawState.localVolume);
+    const effectiveVolume = Number.isFinite(requestedLocalVolume)
+        ? clamp(requestedLocalVolume, 0, 100)
+        : volume;
     const previousState = activeRadioState;
     const playingChanged = !previousState || previousState.playing !== (rawState.playing === true);
 
@@ -689,6 +695,7 @@ function applyRadioState(rawState, force = false) {
         source,
         videoId,
         volume,
+        localVolume: effectiveVolume,
         playing: rawState.playing === true && source === 'youtube' && videoId !== null,
         position,
         revision: incomingRevision,
@@ -699,13 +706,15 @@ function applyRadioState(rawState, force = false) {
         provisionalVideoId = null;
     }
 
+    localEffectiveVolume = effectiveVolume;
+
     if (!statusIsError) {
         statusLockedUntil = 0;
     }
 
     volumeSlider.value = String(volume);
     updateVolumeDisplay();
-    setYouTubeVolume(volume);
+    setYouTubeVolume(effectiveVolume);
 
     if (source !== 'youtube' || !videoId) {
         stopYouTube();
@@ -725,7 +734,7 @@ function applyRadioState(rawState, force = false) {
     if (videoChanged) {
         currentTitle = '';
         if (activeRadioState.playing) {
-            playYouTube(videoId, position, volume);
+            playYouTube(videoId, position, effectiveVolume);
         } else {
             loadedVideoId = videoId;
             youtubePlayer.cueVideoById({ videoId, startSeconds: position });
@@ -740,14 +749,14 @@ function applyRadioState(rawState, force = false) {
         if (activeRadioState.playing) {
             youtubePlayer.unMute();
             if (force || playingChanged || playerState !== window.YT.PlayerState.PLAYING) {
-                resumeYouTube(volume);
+                resumeYouTube(effectiveVolume);
             }
         } else if (force || playingChanged || playerState !== window.YT.PlayerState.PAUSED) {
             pauseYouTube();
         }
     }
 
-    setYouTubeVolume(volume);
+    setYouTubeVolume(effectiveVolume);
     debugYouTubeSnapshot('Synchronized state applied', position);
     if (activeRadioState.playing) {
         verifyYouTubeAudio(videoId, position);
@@ -762,6 +771,18 @@ function clearLocalPlayback() {
     playbackSlider.max = '1';
     setRangeFill(playbackSlider, 0, 1);
     renderNowPlaying();
+}
+
+function applyLocalVolume(payload) {
+    if (!activeRadioState
+        || Number(payload.vehicleNetworkId) !== Number(activeRadioState.vehicleNetworkId)
+        || !Number.isFinite(Number(payload.volume))) {
+        return;
+    }
+
+    localEffectiveVolume = clamp(Number(payload.volume), 0, 100);
+    activeRadioState.localVolume = localEffectiveVolume;
+    setYouTubeVolume(localEffectiveVolume);
 }
 
 function updateVideoMetadata() {
@@ -858,7 +879,7 @@ function checkPlaybackDrift() {
 
     if (drift > syncSettings.DriftThreshold) {
         seekYouTube(expected);
-        resumeYouTube(activeRadioState.volume);
+        resumeYouTube(localEffectiveVolume);
 
         if (debugEnabled) {
             console.log(`[acg_radio] sync expected=${expected.toFixed(1)} actual=${actual.toFixed(1)}`);
@@ -888,6 +909,8 @@ window.addEventListener('message', (event) => {
         applyRadioState(payload.state);
     } else if (payload.action === 'stopLocalPlayback') {
         clearLocalPlayback();
+    } else if (payload.action === 'setLocalVolume') {
+        applyLocalVolume(payload);
     } else if (payload.action === 'updateVehicleRole') {
         setControlPermission(payload.isDriver === true, payload.driverOnly === true);
     } else if (payload.action === 'radioError') {
@@ -952,7 +975,7 @@ playPauseButton.addEventListener('click', async () => {
     if (autoplayBlocked && activeRadioState.playing) {
         autoplayBlocked = false;
         playPauseButton.disabled = !canControl;
-        resumeYouTube(activeRadioState.volume);
+        resumeYouTube(localEffectiveVolume);
         setStatus('RETRYING PLAYBACK', false, 3000);
         return;
     }

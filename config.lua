@@ -11,7 +11,11 @@ Config.Audio = {
     FullVolumeDistance = 4.0,
     InsideVehicleMultiplier = 1.0,
     OutsideVehicleMultiplier = 0.70,
-    UpdateInterval = 250
+    UpdateInterval = 250,
+    MinAudibleVolume = 1,
+    SourceSwitchThreshold = 3.0,
+    HearOutsideWhileInSilentVehicle = false,
+    EntityResolveGrace = 2000
 }
 
 Config.Sync = {
