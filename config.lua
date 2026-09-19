@@ -14,4 +14,12 @@ Config.Audio = {
     UpdateInterval = 250
 }
 
+Config.Sync = {
+    VehicleCheckInterval = 500,
+    DriftCheckInterval = 5000,
+    DriftThreshold = 2.5,
+    StateCleanupInterval = 60000,
+    ControlCooldown = 150
+}
+
 Config.Debug = false

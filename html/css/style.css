@@ -254,13 +254,28 @@ h1 {
     white-space: nowrap;
 }
 
-.track-details > p:last-child {
+.track-details > #track-source {
     overflow: hidden;
     margin: 0;
     color: var(--muted);
     font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.playback-progress {
+    display: grid;
+    grid-template-columns: 1fr 42px;
+    align-items: center;
+    gap: 9px;
+    margin-top: 12px;
+}
+
+#playback-time {
+    color: var(--muted);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
 }
 
 .transport-controls {
@@ -312,7 +327,8 @@ h1 {
     color: var(--muted);
 }
 
-#volume-slider {
+#volume-slider,
+#playback-slider {
     height: 4px;
     margin: 0;
     appearance: none;
@@ -321,7 +337,8 @@ h1 {
     background: linear-gradient(to right, var(--accent) 50%, rgba(255, 255, 255, 0.12) 50%);
 }
 
-#volume-slider::-webkit-slider-thumb {
+#volume-slider::-webkit-slider-thumb,
+#playback-slider::-webkit-slider-thumb {
     width: 16px;
     height: 16px;
     appearance: none;
@@ -332,8 +349,27 @@ h1 {
     box-shadow: 0 0 0 1px var(--accent), 0 0 13px rgba(88, 230, 194, 0.38);
 }
 
-#volume-slider:focus-visible::-webkit-slider-thumb {
+#volume-slider:focus-visible::-webkit-slider-thumb,
+#playback-slider:focus-visible::-webkit-slider-thumb {
     box-shadow: 0 0 0 3px #17251f, 0 0 0 5px var(--accent);
+}
+
+#playback-slider {
+    width: 100%;
+    background: linear-gradient(to right, var(--accent) 0%, rgba(255, 255, 255, 0.12) 0%);
+}
+
+#playback-slider:disabled {
+    opacity: 0.45;
+}
+
+button:disabled,
+input:disabled {
+    cursor: not-allowed;
+}
+
+button:disabled {
+    opacity: 0.45;
 }
 
 #volume-value {
@@ -493,6 +529,26 @@ input:focus {
 
 #system-status {
     color: var(--accent);
+}
+
+#youtube-player-host,
+.youtube-player-host {
+    position: fixed;
+    top: -10000px;
+    left: -10000px;
+    width: 200px;
+    height: 200px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
+#youtube-player-host iframe,
+.youtube-player-host iframe {
+    width: 200px;
+    height: 200px;
+    border: 0;
+    pointer-events: none;
 }
 
 @media (max-width: 620px), (max-height: 690px) {

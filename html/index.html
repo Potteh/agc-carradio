@@ -48,6 +48,10 @@
                     <p class="eyebrow" id="now-playing-title">NOW PLAYING</p>
                     <h2 id="track-title">No source selected</h2>
                     <p id="track-source">Choose a source below to test the controls</p>
+                    <div class="playback-progress">
+                        <input id="playback-slider" type="range" min="0" max="1" value="0" step="0.1" aria-label="Playback position" disabled>
+                        <span id="playback-time">0:00</span>
+                    </div>
                 </div>
                 <div class="transport-controls">
                     <button id="play-pause-button" class="transport-button primary" type="button" aria-label="Play">
@@ -116,6 +120,7 @@
         </section>
     </main>
 
+    <div id="youtube-player-host" class="youtube-player-host" aria-hidden="true"></div>
     <script src="js/app.js"></script>
 </body>
 </html>
