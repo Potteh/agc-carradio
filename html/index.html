@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ACG Vehicle Radio</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <main id="radio-shell" class="radio-shell" aria-hidden="true" hidden>
+        <section class="radio-panel" aria-label="ACG vehicle radio">
+            <header class="radio-header">
+                <div class="brand">
+                    <span class="brand-mark" aria-hidden="true">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </span>
+                    <div>
+                        <p class="eyebrow">PREMIUM INFOTAINMENT</p>
+                        <h1>ACG VEHICLE RADIO</h1>
+                    </div>
+                </div>
+                <button id="close-button" class="icon-button close-button" type="button" aria-label="Close radio">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M6 6l12 12M18 6L6 18"></path>
+                    </svg>
+                </button>
+            </header>
+
+            <div class="vehicle-strip">
+                <div>
+                    <span class="status-dot"></span>
+                    <span id="vehicle-plate">VEHICLE</span>
+                </div>
+                <span id="occupant-role" class="role-badge">OCCUPANT</span>
+            </div>
+
+            <section class="now-playing" aria-labelledby="now-playing-title">
+                <div class="cover-art" aria-hidden="true">
+                    <svg viewBox="0 0 64 64">
+                        <path d="M25 18v28M25 22l23-5v24"></path>
+                        <circle cx="18" cy="46" r="7"></circle>
+                        <circle cx="41" cy="41" r="7"></circle>
+                    </svg>
+                </div>
+                <div class="track-details">
+                    <p class="eyebrow" id="now-playing-title">NOW PLAYING</p>
+                    <h2 id="track-title">No source selected</h2>
+                    <p id="track-source">Choose a source below to test the controls</p>
+                </div>
+                <div class="transport-controls">
+                    <button id="play-pause-button" class="transport-button primary" type="button" aria-label="Play">
+                        <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M8 5l11 7-11 7z"></path>
+                        </svg>
+                        <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M7 5h4v14H7zM14 5h4v14h-4z"></path>
+                        </svg>
+                    </button>
+                    <button id="stop-button" class="transport-button" type="button" aria-label="Stop">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M7 7h10v10H7z"></path>
+                        </svg>
+                    </button>
+                </div>
+            </section>
+
+            <section class="volume-section" aria-label="Volume controls">
+                <svg class="volume-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 10v4h4l5 4V6L8 10H4zM16 9c1 .8 1.5 1.8 1.5 3S17 14.2 16 15M18.5 6.5c1.8 1.4 2.8 3.2 2.8 5.5s-1 4.1-2.8 5.5"></path>
+                </svg>
+                <input id="volume-slider" type="range" min="0" max="100" value="50" aria-label="Volume">
+                <output id="volume-value" for="volume-slider">50%</output>
+            </section>
+
+            <nav class="source-tabs" aria-label="Audio source">
+                <button class="tab-button active" type="button" data-tab="youtube" aria-selected="true">YouTube</button>
+                <button class="tab-button" type="button" data-tab="stream" aria-selected="false">Radio Stream</button>
+            </nav>
+
+            <div class="source-content">
+                <form id="youtube-form" class="tab-panel active" data-panel="youtube">
+                    <label for="youtube-url">YouTube URL</label>
+                    <div class="input-row">
+                        <input id="youtube-url" type="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" required>
+                        <button class="action-button" type="submit">
+                            <span>PLAY</span>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l9 6-9 6z"></path></svg>
+                        </button>
+                    </div>
+                </form>
+
+                <form id="stream-form" class="tab-panel" data-panel="stream">
+                    <div class="field-grid">
+                        <div class="field">
+                            <label for="stream-url">Direct audio stream URL</label>
+                            <input id="stream-url" type="url" placeholder="https://radio.example.com/live" autocomplete="off" required>
+                        </div>
+                        <div class="field station-field">
+                            <label for="station-name">Station name <span>OPTIONAL</span></label>
+                            <input id="station-name" type="text" maxlength="64" placeholder="Night Drive FM" autocomplete="off">
+                        </div>
+                    </div>
+                    <button class="action-button stream-play" type="submit">
+                        <span>PLAY STREAM</span>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l9 6-9 6z"></path></svg>
+                    </button>
+                </form>
+            </div>
+
+            <footer class="radio-footer">
+                <span>ESC TO CLOSE</span>
+                <span id="system-status">SYSTEM READY</span>
+            </footer>
+        </section>
+    </main>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
