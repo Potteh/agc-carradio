@@ -147,6 +147,16 @@ RegisterNUICallback('setVolume', function(data, callback)
     HandlePlaybackRequest('setVolume', data, callback)
 end)
 
+AddEventHandler('onClientResourceStart', function(resourceName)
+    if resourceName ~= GetCurrentResourceName() then
+        return
+    end
+
+    isRadioOpen = false
+    SetNuiFocus(false, false)
+    SendNUIMessage({ action = 'closeRadio' })
+end)
+
 AddEventHandler('onResourceStop', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then
         return

@@ -185,3 +185,13 @@ volumeSlider.addEventListener('change', async () => {
         setStatus('VOLUME REQUESTED');
     }
 });
+
+function initializeUI() {
+    hideRadio();
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeUI, { once: true });
+} else {
+    initializeUI();
+}
