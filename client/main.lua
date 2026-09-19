@@ -258,6 +258,14 @@ RegisterNUICallback('syncReport', function(data, callback)
     callback({ ok = true })
 end)
 
+RegisterNUICallback('youtubeDebug', function(data, callback)
+    if Config.Debug and type(data) == 'table' and type(data.message) == 'string' then
+        DebugPrint(data.message:sub(1, 512))
+    end
+
+    callback({ ok = true })
+end)
+
 RegisterNUICallback('nuiReady', function(_, callback)
     local vehicle = GetCurrentVehicle()
     local networkId = GetVehicleNetworkId(vehicle)

@@ -279,18 +279,22 @@ end)
 
 RegisterNetEvent('acg_radio:server:stop', function(request)
     local playerSource = source
+    if type(request) ~= 'table' then
+        Reject(playerSource, 'Invalid stop request.')
+        return
+    end
+
     if IsRateLimited(playerSource, 'stop') then
         RejectRateLimited(playerSource, 'stop')
         return
     end
 
-    local isTerminalStop = type(request) == 'table'
-        and request.terminal == true
+    local isTerminalStop = request.terminal == true
         and request.expectedVideoId ~= nil
 
     local networkId, vehicle, errorMessage = ValidateOccupiedVehicle(
         playerSource,
-        type(request) == 'table' and request.vehicleNetworkId or nil,
+        request.vehicleNetworkId,
         false
     )
     if not networkId then
