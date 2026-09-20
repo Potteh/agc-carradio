@@ -3,7 +3,7 @@ game 'gta5'
 
 author 'ACG'
 description 'QBCore vehicle radio foundation'
-version '0.2.0'
+version '0.3.0'
 
 ui_page 'html/index.html'
 

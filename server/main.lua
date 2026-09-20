@@ -332,7 +332,8 @@ local function BuildSnapshot(networkId, state)
         snapshot.queue[index] = {
             videoId = item.videoId,
             title = item.title,
-            author = item.author
+            author = item.author,
+            duration = item.duration
         }
     end
 
@@ -533,7 +534,7 @@ local function AdvanceQueue(networkId, state, vehicle, reason)
     state.streamUrl = nil
     state.title = nextItem.title
     state.author = nextItem.author
-    state.duration = nil
+    state.duration = nextItem.duration
     state.playing = true
     state.position = 0.0
     state.startedAt = now
@@ -582,7 +583,8 @@ RegisterNetEvent('acg_radio:server:addToQueue', function(request)
     state.queue[#state.queue + 1] = {
         videoId = request.videoId,
         title = SanitizeText(request.title, 120),
-        author = SanitizeText(request.author, 80)
+        author = SanitizeText(request.author, 80),
+        duration = (IsValidNumber(tonumber(request.duration)) and tonumber(request.duration) > 0 and tonumber(request.duration) <= 86400) and math.floor(tonumber(request.duration) * 10 + 0.5) / 10 or nil
     }
     state.updatedAt = GetServerTime()
     state.revision = NextRevision()

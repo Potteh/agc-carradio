@@ -3,6 +3,11 @@ const closeButton = document.getElementById('close-button');
 const playPauseButton = document.getElementById('play-pause-button');
 const stopButton = document.getElementById('stop-button');
 const skipButton = document.getElementById('skip-button');
+const favoriteButton = document.getElementById('favorite-button');
+const favoritesList = document.getElementById('favorites-list');
+const favoritesCount = document.getElementById('favorites-count');
+const historyList = document.getElementById('history-list');
+const clearHistoryButton = document.getElementById('clear-history-button');
 const queueAddButton = document.getElementById('queue-add-button');
 const queueList = document.getElementById('queue-list');
 const queueCount = document.getElementById('queue-count');
@@ -34,6 +39,9 @@ let canControl = false;
 let isSeeking = false;
 let autoplayBlocked = false;
 let youtubePlayer = null;
+let metadataPlayer = null;
+let metadataPlayerReady = false;
+let metadataRequest = null;
 let youtubePlayerReady = false;
 let youtubeApiRequested = false;
 let youtubeApiAttempts = 0;
@@ -70,6 +78,12 @@ let syncSettings = {
     DriftThreshold: 2.5
 };
 let queueSettings = { enabled: true, maxItems: 20 };
+let librarySettings = { favoritesMaxItems: 50, historyMaxItems: 25 };
+let favorites = [];
+let recentHistory = [];
+let lastHistoryVideoId = null;
+const FAVORITES_STORAGE_KEY = 'acg_radio_favorites_v1';
+const HISTORY_STORAGE_KEY = 'acg_radio_history_v1';
 let streamSettings = {
     allowCustomUrls: false,
     maxUrlLength: 2048,
@@ -217,6 +231,7 @@ function setControlPermission(isDriver, driverOnly) {
     volumeSlider.disabled = !canControl;
     youtubePlayButton.disabled = !canControl || !youtubePlayerReady;
     updatePlaybackDisplay();
+    renderLibrary();
 }
 
 function applySettings(settings = {}) {
@@ -231,6 +246,14 @@ function applySettings(settings = {}) {
             maxItems: Math.max(Number(settings.queue.maxItems) || 20, 1)
         };
         queueSection.hidden = !queueSettings.enabled;
+    }
+
+    if (settings.library && typeof settings.library === 'object') {
+        librarySettings = {
+            favoritesMaxItems: Math.max(Number(settings.library.favoritesMaxItems) || 50, 1),
+            historyMaxItems: Math.max(Number(settings.library.historyMaxItems) || 25, 1)
+        };
+        loadLibrary();
     }
 
     if (settings.streams && typeof settings.streams === 'object') {
@@ -301,6 +324,174 @@ function renderStationList() {
     });
 }
 
+function safeStoredTracks(key, maxItems) {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter((item) => item && VIDEO_ID_PATTERN.test(item.videoId || ''))
+            .slice(0, maxItems)
+            .map((item) => ({
+                videoId: item.videoId,
+                title: typeof item.title === 'string' ? item.title.slice(0, 120) : '',
+                author: typeof item.author === 'string' ? item.author.slice(0, 80) : '',
+                duration: Math.max(0, Number(item.duration) || 0)
+            }));
+    } catch (_) {
+        return [];
+    }
+}
+
+function loadLibrary() {
+    favorites = safeStoredTracks(FAVORITES_STORAGE_KEY, librarySettings.favoritesMaxItems);
+    recentHistory = safeStoredTracks(HISTORY_STORAGE_KEY, librarySettings.historyMaxItems);
+    renderLibrary();
+}
+
+function persistLibrary() {
+    try {
+        localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favorites.slice(0, librarySettings.favoritesMaxItems)));
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(recentHistory.slice(0, librarySettings.historyMaxItems)));
+    } catch (error) {
+        if (debugEnabled) console.warn('[acg_radio] Unable to persist local library', error);
+    }
+}
+
+function trackFromState(state = activeRadioState) {
+    if (!state || state.source !== 'youtube' || !VIDEO_ID_PATTERN.test(state.videoId || '')) return null;
+    return {
+        videoId: state.videoId,
+        title: currentTitle || state.title || '',
+        author: currentAuthor || state.author || '',
+        duration: Math.max(0, Number(state.duration) || 0)
+    };
+}
+
+function recordRecentTrack(state = activeRadioState) {
+    const track = trackFromState(state);
+    if (!track || track.videoId === lastHistoryVideoId) return;
+    lastHistoryVideoId = track.videoId;
+    recentHistory = [track, ...recentHistory.filter((item) => item.videoId !== track.videoId)]
+        .slice(0, librarySettings.historyMaxItems);
+    persistLibrary();
+    renderLibrary();
+}
+
+function toggleFavoriteCurrent() {
+    const track = trackFromState();
+    if (!track) return;
+    const index = favorites.findIndex((item) => item.videoId === track.videoId);
+    if (index >= 0) {
+        favorites.splice(index, 1);
+        setStatus('REMOVED FROM FAVORITES', false, 2500);
+    } else {
+        favorites = [track, ...favorites.filter((item) => item.videoId !== track.videoId)]
+            .slice(0, librarySettings.favoritesMaxItems);
+        setStatus('ADDED TO FAVORITES', false, 2500);
+    }
+    persistLibrary();
+    renderLibrary();
+}
+
+function createLibraryRow(item, isFavorite) {
+    const row = document.createElement('div');
+    row.className = 'library-item';
+    const img = document.createElement('img');
+    img.className = 'library-thumb';
+    img.alt = '';
+    img.src = `https://i.ytimg.com/vi/${item.videoId}/mqdefault.jpg`;
+    const copy = document.createElement('span');
+    copy.className = 'queue-copy';
+    const title = document.createElement('span');
+    title.className = 'queue-title';
+    title.textContent = item.title || item.videoId;
+    const author = document.createElement('span');
+    author.className = 'queue-author';
+    author.textContent = item.author || 'YouTube';
+    copy.append(title, author);
+    const actions = document.createElement('span');
+    actions.className = 'library-actions';
+    const play = document.createElement('button');
+    play.type = 'button'; play.className = 'mini-button'; play.textContent = 'PLAY'; play.disabled = !canControl;
+    play.addEventListener('click', async () => {
+        const result = await postNUI('playYoutube', { videoId: item.videoId });
+        if (result.ok) setStatus('WAITING FOR SERVER', false, 2500);
+    });
+    const queue = document.createElement('button');
+    queue.type = 'button'; queue.className = 'mini-button'; queue.textContent = '+ QUEUE'; queue.disabled = !canControl || !queueSettings.enabled;
+    queue.addEventListener('click', async () => {
+        const result = await postNUI('addToQueue', item);
+        if (result.ok) setStatus('ADDED TO QUEUE', false, 2500);
+    });
+    actions.append(play, queue);
+    if (isFavorite) {
+        const remove = document.createElement('button');
+        remove.type = 'button'; remove.className = 'mini-button'; remove.textContent = 'REMOVE';
+        remove.addEventListener('click', () => {
+            favorites = favorites.filter((track) => track.videoId !== item.videoId);
+            persistLibrary(); renderLibrary();
+        });
+        actions.append(remove);
+    }
+    row.append(img, copy, actions);
+    return row;
+}
+
+function renderLibrary() {
+    if (!favoritesList || !historyList) return;
+    favoritesList.replaceChildren();
+    favoritesCount.textContent = String(favorites.length);
+    if (!favorites.length) {
+        const empty = document.createElement('p'); empty.className = 'queue-empty'; empty.textContent = 'No favorites yet'; favoritesList.appendChild(empty);
+    } else favorites.forEach((item) => favoritesList.appendChild(createLibraryRow(item, true)));
+    historyList.replaceChildren();
+    if (!recentHistory.length) {
+        const empty = document.createElement('p'); empty.className = 'queue-empty'; empty.textContent = 'No recent tracks'; historyList.appendChild(empty);
+    } else recentHistory.forEach((item) => historyList.appendChild(createLibraryRow(item, false)));
+    const currentId = activeRadioState && activeRadioState.source === 'youtube' ? activeRadioState.videoId : null;
+    const favored = currentId && favorites.some((item) => item.videoId === currentId);
+    if (favoriteButton) {
+        favoriteButton.classList.toggle('active', Boolean(favored));
+        favoriteButton.disabled = !currentId;
+        favoriteButton.title = favored ? 'Remove from favorites' : 'Add to favorites';
+    }
+}
+
+function initializeMetadataPlayer() {
+    if (metadataPlayer || !window.YT || !window.YT.Player) return;
+    metadataPlayer = new window.YT.Player('youtube-metadata-host', {
+        width: '200', height: '200',
+        playerVars: { autoplay: 0, controls: 0, disablekb: 1, playsinline: 1 },
+        events: {
+            onReady: () => { metadataPlayerReady = true; },
+            onStateChange: () => {
+                if (!metadataRequest || !metadataPlayerReady) return;
+                const data = metadataPlayer.getVideoData ? metadataPlayer.getVideoData() : {};
+                if (data && data.video_id === metadataRequest.videoId && (data.title || data.author)) {
+                    const resolve = metadataRequest.resolve;
+                    const videoId = metadataRequest.videoId;
+                    metadataRequest = null;
+                    resolve({ videoId, title: data.title || '', author: data.author || '', duration: Number(metadataPlayer.getDuration ? metadataPlayer.getDuration() : 0) || 0 });
+                }
+            },
+            onError: () => {
+                if (metadataRequest) { const resolve = metadataRequest.resolve; const videoId = metadataRequest.videoId; metadataRequest = null; resolve({ videoId }); }
+            }
+        }
+    });
+}
+
+function resolveYouTubeMetadata(videoId) {
+    return new Promise((resolve) => {
+        if (!VIDEO_ID_PATTERN.test(videoId || '') || !metadataPlayerReady || !metadataPlayer) { resolve({ videoId }); return; }
+        if (metadataRequest) { metadataRequest.resolve({ videoId: metadataRequest.videoId }); metadataRequest = null; }
+        const timer = setTimeout(() => {
+            if (metadataRequest && metadataRequest.videoId === videoId) { metadataRequest = null; resolve({ videoId }); }
+        }, 4500);
+        metadataRequest = { videoId, resolve: (data) => { clearTimeout(timer); resolve(data); } };
+        try { metadataPlayer.cueVideoById(videoId); } catch (_) { clearTimeout(timer); metadataRequest = null; resolve({ videoId }); }
+    });
+}
+
 function renderQueue() {
     const queue = activeRadioState && Array.isArray(activeRadioState.queue)
         ? activeRadioState.queue
@@ -323,6 +514,11 @@ function renderQueue() {
             number.className = 'queue-number';
             number.textContent = String(index + 1).padStart(2, '0');
 
+            const thumb = document.createElement('img');
+            thumb.className = 'queue-thumb';
+            thumb.alt = '';
+            thumb.src = `https://i.ytimg.com/vi/${item.videoId}/mqdefault.jpg`;
+
             const copy = document.createElement('span');
             copy.className = 'queue-copy';
             const title = document.createElement('span');
@@ -331,6 +527,7 @@ function renderQueue() {
             const author = document.createElement('span');
             author.className = 'queue-author';
             author.textContent = item && item.author ? item.author : 'YouTube';
+            if (item && Number(item.duration) > 0) author.textContent += ` · ${formatTime(Number(item.duration))}`;
             copy.append(title, author);
 
             const remove = document.createElement('button');
@@ -344,7 +541,7 @@ function renderQueue() {
                 if (result.ok) setStatus('WAITING FOR SERVER', false, 3000);
             });
 
-            row.append(number, copy, remove);
+            row.append(number, thumb, copy, remove);
             queueList.appendChild(row);
         });
     }
@@ -649,6 +846,7 @@ function handleYouTubeReady() {
     youtubePlayButton.disabled = !canControl;
 
     debugYouTube('YouTube iframe ready');
+    initializeMetadataPlayer();
     debugYouTubeSnapshot('YouTube ready');
 
     if (pendingRadioState) {
@@ -1117,6 +1315,8 @@ function applyRadioState(rawState, force = false) {
     }
 
     localEffectiveVolume = effectiveVolume;
+    if (source === 'youtube' && activeRadioState.playing) recordRecentTrack(activeRadioState);
+    renderLibrary();
 
     if (!statusIsError) {
         statusLockedUntil = 0;
@@ -1247,6 +1447,9 @@ function updateVideoMetadata() {
 
     if (videoData.title) currentTitle = videoData.title;
     if (videoData.author) currentAuthor = videoData.author;
+    if (activeRadioState) { activeRadioState.title = currentTitle; activeRadioState.author = currentAuthor; }
+    recordRecentTrack(activeRadioState);
+    renderLibrary();
     const duration = Number(youtubePlayer.getDuration ? youtubePlayer.getDuration() : 0) || 0;
 
     if (videoData.video_id !== lastMetadataVideoId && (currentTitle || currentAuthor || duration > 0)) {
@@ -1452,7 +1655,9 @@ queueAddButton.addEventListener('click', async () => {
         return;
     }
 
-    const result = await postNUI('addToQueue', { videoId });
+    setStatus('READING YOUTUBE METADATA', false, 5000);
+    const metadata = await resolveYouTubeMetadata(videoId);
+    const result = await postNUI('addToQueue', metadata);
     if (result.ok) {
         document.getElementById('youtube-url').value = '';
         setStatus('ADDED TO QUEUE', false, 3000);
@@ -1463,6 +1668,15 @@ skipButton.addEventListener('click', async () => {
     if (!canControl || !activeRadioState || activeRadioState.source !== 'youtube') return;
     const result = await postNUI('skip');
     if (result.ok) setStatus('WAITING FOR SERVER', false, 3000);
+});
+
+favoriteButton.addEventListener('click', toggleFavoriteCurrent);
+clearHistoryButton.addEventListener('click', () => {
+    recentHistory = [];
+    lastHistoryVideoId = null;
+    persistLibrary();
+    renderLibrary();
+    setStatus('HISTORY CLEARED', false, 2000);
 });
 
 youtubeForm.addEventListener('submit', async (event) => {

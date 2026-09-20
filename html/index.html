@@ -66,6 +66,9 @@
                             <path d="M7 5h4v14H7zM14 5h4v14h-4z"></path>
                         </svg>
                     </button>
+                    <button id="favorite-button" class="transport-button" type="button" aria-label="Add current track to favorites" title="Favorite">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5l-1.45-1.32C5.4 14.5 2 11.42 2 7.65 2 4.57 4.42 2.15 7.5 2.15c1.74 0 3.41.81 4.5 2.09 1.09-1.28 2.76-2.09 4.5-2.09 3.08 0 5.5 2.42 5.5 5.5 0 3.77-3.4 6.85-8.55 11.54L12 20.5z"></path></svg>
+                    </button>
                     <button id="skip-button" class="transport-button" type="button" aria-label="Skip to next queued track" title="Skip">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M6 5l9 7-9 7V5zm10 0h2v14h-2V5z"></path>
@@ -114,6 +117,16 @@
                             <p class="queue-empty">Queue is empty</p>
                         </div>
                     </section>
+                    <section class="library-section" aria-label="Music library">
+                        <div class="library-column">
+                            <div class="queue-heading"><span>FAVORITES</span><span id="favorites-count">0</span></div>
+                            <div id="favorites-list" class="library-list"><p class="queue-empty">No favorites yet</p></div>
+                        </div>
+                        <div class="library-column">
+                            <div class="queue-heading"><span>RECENTLY PLAYED</span><button id="clear-history-button" class="text-button" type="button">CLEAR</button></div>
+                            <div id="history-list" class="library-list"><p class="queue-empty">No recent tracks</p></div>
+                        </div>
+                    </section>
                 </form>
 
                 <form id="stream-form" class="tab-panel" data-panel="stream">
@@ -152,6 +165,7 @@
     </main>
 
     <div id="youtube-player-host" class="youtube-player-host" aria-hidden="true"></div>
+    <div id="youtube-metadata-host" class="youtube-player-host metadata-host" aria-hidden="true"></div>
     <script src="js/app.js"></script>
 </body>
 </html>

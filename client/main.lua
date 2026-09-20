@@ -574,6 +574,10 @@ local function GetNuiSettings()
         queue = {
             enabled = Config.Queue and Config.Queue.Enabled == true,
             maxItems = math.max(math.floor(tonumber(Config.Queue and Config.Queue.MaxItems) or 20), 1)
+        },
+        library = {
+            favoritesMaxItems = math.max(math.floor(tonumber(Config.Library and Config.Library.FavoritesMaxItems) or 50), 1),
+            historyMaxItems = math.max(math.floor(tonumber(Config.Library and Config.Library.HistoryMaxItems) or 25), 1)
         }
     }
 end
@@ -769,7 +773,8 @@ RegisterNUICallback('addToQueue', function(data, callback)
     SendControlRequest('acg_radio:server:addToQueue', {
         videoId = videoId,
         title = type(data.title) == 'string' and data.title or nil,
-        author = type(data.author) == 'string' and data.author or nil
+        author = type(data.author) == 'string' and data.author or nil,
+        duration = tonumber(data.duration)
     }, callback)
 end)
 

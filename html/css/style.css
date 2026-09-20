@@ -866,3 +866,97 @@ input:focus {
         grid-column: auto;
     }
 }
+
+/* Phase 6: queue metadata, favorites, and recently played */
+.queue-thumb,
+.library-thumb {
+    width: 54px;
+    height: 34px;
+    object-fit: cover;
+    border-radius: 6px;
+    flex: 0 0 auto;
+}
+
+.library-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-top: 14px;
+}
+
+.library-column {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.library-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 190px;
+    overflow-y: auto;
+}
+
+.library-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    padding: 8px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.library-actions {
+    display: flex;
+    gap: 5px;
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+
+.mini-button,
+.text-button {
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
+    color: inherit;
+    border-radius: 6px;
+    cursor: pointer;
+    font: inherit;
+}
+
+.mini-button {
+    padding: 5px 7px;
+    font-size: 9px;
+    letter-spacing: .05em;
+}
+
+.text-button {
+    padding: 3px 7px;
+    font-size: 9px;
+}
+
+.mini-button:disabled {
+    opacity: .4;
+    cursor: default;
+}
+
+#favorite-button.active svg {
+    fill: currentColor;
+}
+
+.metadata-host {
+    left: -10300px;
+}
+
+@media (max-width: 800px) {
+    .library-section {
+        grid-template-columns: 1fr;
+    }
+    .library-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+}

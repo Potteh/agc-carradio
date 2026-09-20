@@ -12,6 +12,11 @@ Config.Queue = {
     MaxItems = 20
 }
 
+Config.Library = {
+    FavoritesMaxItems = 50,
+    HistoryMaxItems = 25
+}
+
 Config.Streams = {
     AllowCustomUrls = true,
     MaxUrlLength = 2048
