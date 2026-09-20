@@ -258,7 +258,11 @@ local function BuildPlaybackState(state, localVolume)
         playing = state.playing == true,
         position = GetExpectedPosition(state),
         revision = state.revision,
-        serverTimestamp = state.serverTimestamp
+        serverTimestamp = state.serverTimestamp,
+        title = state.title,
+        author = state.author,
+        duration = state.duration,
+        queue = state.queue or {}
     }
 end
 
