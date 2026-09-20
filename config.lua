@@ -7,6 +7,11 @@ Config.DriverOnly = false
 Config.DefaultVolume = 50
 Config.MaxVolume = 100
 
+Config.Queue = {
+    Enabled = true,
+    MaxItems = 20
+}
+
 Config.Streams = {
     AllowCustomUrls = true,
     MaxUrlLength = 2048

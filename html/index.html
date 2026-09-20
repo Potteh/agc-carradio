@@ -41,7 +41,8 @@
 
             <section class="now-playing" aria-labelledby="now-playing-title">
                 <div class="cover-art" aria-hidden="true">
-                    <svg viewBox="0 0 64 64">
+                    <img id="track-thumbnail" class="track-thumbnail" alt="" hidden>
+                    <svg id="cover-placeholder" viewBox="0 0 64 64">
                         <path d="M25 18v28M25 22l23-5v24"></path>
                         <circle cx="18" cy="46" r="7"></circle>
                         <circle cx="41" cy="41" r="7"></circle>
@@ -63,6 +64,11 @@
                         </svg>
                         <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M7 5h4v14H7zM14 5h4v14h-4z"></path>
+                        </svg>
+                    </button>
+                    <button id="skip-button" class="transport-button" type="button" aria-label="Skip to next queued track" title="Skip">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 5l9 7-9 7V5zm10 0h2v14h-2V5z"></path>
                         </svg>
                     </button>
                     <button id="stop-button" class="transport-button" type="button" aria-label="Stop">
@@ -89,13 +95,25 @@
             <div class="source-content">
                 <form id="youtube-form" class="tab-panel active" data-panel="youtube">
                     <label for="youtube-url">YouTube URL</label>
-                    <div class="input-row">
+                    <div class="input-row youtube-actions">
                         <input id="youtube-url" type="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" required>
                         <button class="action-button" type="submit">
-                            <span>PLAY</span>
+                            <span>PLAY NOW</span>
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l9 6-9 6z"></path></svg>
                         </button>
+                        <button id="queue-add-button" class="action-button secondary-action" type="button">
+                            <span>ADD TO QUEUE</span>
+                        </button>
                     </div>
+                    <section id="queue-section" class="queue-section" aria-label="Up next">
+                        <div class="queue-heading">
+                            <span>UP NEXT</span>
+                            <span id="queue-count">0 TRACKS</span>
+                        </div>
+                        <div id="queue-list" class="queue-list">
+                            <p class="queue-empty">Queue is empty</p>
+                        </div>
+                    </section>
                 </form>
 
                 <form id="stream-form" class="tab-panel" data-panel="stream">

@@ -566,7 +566,11 @@ local function GetNuiSettings()
         sync = Config.Sync,
         debug = Config.Debug,
         streamerMode = streamerMode,
-        streams = GetStreamUiSettings()
+        streams = GetStreamUiSettings(),
+        queue = {
+            enabled = Config.Queue and Config.Queue.Enabled == true,
+            maxItems = math.max(math.floor(tonumber(Config.Queue and Config.Queue.MaxItems) or 20), 1)
+        }
     }
 end
 
@@ -751,6 +755,57 @@ RegisterNUICallback('setVolume', function(data, callback)
     }, callback)
 end)
 
+RegisterNUICallback('addToQueue', function(data, callback)
+    local videoId = type(data) == 'table' and data.videoId or nil
+    if not IsValidVideoId(videoId) then
+        callback({ ok = false, error = 'invalid_video' })
+        return
+    end
+
+    SendControlRequest('acg_radio:server:addToQueue', {
+        videoId = videoId,
+        title = type(data.title) == 'string' and data.title or nil,
+        author = type(data.author) == 'string' and data.author or nil
+    }, callback)
+end)
+
+RegisterNUICallback('removeQueueItem', function(data, callback)
+    local index = type(data) == 'table' and tonumber(data.index) or nil
+    if not index then
+        callback({ ok = false, error = 'invalid_index' })
+        return
+    end
+
+    SendControlRequest('acg_radio:server:removeQueueItem', { index = index }, callback)
+end)
+
+RegisterNUICallback('skip', function(_, callback)
+    SendControlRequest('acg_radio:server:skip', {}, callback)
+end)
+
+RegisterNUICallback('youtubeMetadata', function(data, callback)
+    if type(data) ~= 'table' or not IsValidVideoId(data.videoId) then
+        callback({ ok = false })
+        return
+    end
+
+    local vehicle = GetCurrentVehicle()
+    local networkId = GetVehicleNetworkId(vehicle)
+    if networkId == 0 or networkId ~= currentVehicleNetworkId then
+        callback({ ok = false })
+        return
+    end
+
+    TriggerServerEvent('acg_radio:server:updateMetadata', {
+        vehicleNetworkId = networkId,
+        videoId = data.videoId,
+        title = data.title,
+        author = data.author,
+        duration = tonumber(data.duration)
+    })
+    callback({ ok = true })
+end)
+
 RegisterNUICallback('youtubeError', function(data, callback)
     local code = type(data) == 'table' and tonumber(data.code) or 0
     local videoId = type(data) == 'table' and data.videoId or nil
@@ -772,7 +827,23 @@ RegisterNUICallback('youtubeError', function(data, callback)
 end)
 
 RegisterNUICallback('youtubeEnded', function(data, callback)
-    StopFailedSource(type(data) == 'table' and data.videoId or nil)
+    local videoId = type(data) == 'table' and data.videoId or nil
+    if not IsValidVideoId(videoId) or videoId ~= currentRadioVideoId then
+        callback({ ok = false })
+        return
+    end
+
+    local vehicle = GetCurrentVehicle()
+    local networkId = GetVehicleNetworkId(vehicle)
+    if networkId == 0 or networkId ~= currentVehicleNetworkId then
+        callback({ ok = false })
+        return
+    end
+
+    TriggerServerEvent('acg_radio:server:trackEnded', {
+        vehicleNetworkId = networkId,
+        expectedVideoId = videoId
+    })
     callback({ ok = true })
 end)
 

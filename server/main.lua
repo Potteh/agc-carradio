@@ -294,7 +294,8 @@ local function CreateIdleState(now, vehicle)
         startedAt = now,
         updatedAt = now,
         revision = NextRevision(),
-        vehicleEntity = vehicle
+        vehicleEntity = vehicle,
+        queue = {}
     }
 end
 
@@ -320,8 +321,20 @@ local function BuildSnapshot(networkId, state)
         playing = state.playing,
         position = GetCurrentPosition(state, now),
         revision = state.revision,
-        serverTimestamp = now
+        serverTimestamp = now,
+        title = state.title,
+        author = state.author,
+        duration = state.duration,
+        queue = {}
     }
+
+    for index, item in ipairs(state.queue or {}) do
+        snapshot.queue[index] = {
+            videoId = item.videoId,
+            title = item.title,
+            author = item.author
+        }
+    end
 
     if state.source == 'stream' then
         snapshot.stationId = state.stationId
@@ -371,6 +384,10 @@ local function StopVehicleRadioInternal(networkId, reason, expectedVideoId)
     state.stationName = nil
     state.genre = nil
     state.streamUrl = nil
+    state.title = nil
+    state.author = nil
+    state.duration = nil
+    state.queue = {}
     state.playing = false
     state.position = 0.0
     state.startedAt = now
@@ -408,7 +425,11 @@ local function BuildPublicRadioState(networkId, state)
         source = state.source,
         videoId = state.videoId,
         volume = state.volume,
-        playing = state.playing == true
+        playing = state.playing == true,
+        title = state.title,
+        author = state.author,
+        duration = state.duration,
+        queueLength = #(state.queue or {})
     }
 
     if state.source == 'youtube' then
@@ -438,7 +459,8 @@ local function StartStreamState(networkId, vehicle, streamData)
         startedAt = now,
         updatedAt = now,
         revision = NextRevision(),
-        vehicleEntity = vehicle
+        vehicleEntity = vehicle,
+        queue = {}
     }
 
     VehicleRadios[networkId] = state
@@ -480,12 +502,211 @@ RegisterNetEvent('acg_radio:server:playYoutube', function(request)
         startedAt = now,
         updatedAt = now,
         revision = NextRevision(),
-        vehicleEntity = vehicle
+        vehicleEntity = vehicle,
+        queue = previousState.queue or {},
+        title = nil,
+        author = nil,
+        duration = nil
     }
 
     VehicleRadios[networkId] = state
     BroadcastState(networkId, state)
     DebugPrint(('play player=%s vehicle=%s video=%s'):format(playerSource, networkId, state.videoId))
+end)
+
+local function AdvanceQueue(networkId, state, vehicle, reason)
+    if type(state.queue) ~= 'table' or #state.queue == 0 then
+        return false
+    end
+
+    local nextItem = table.remove(state.queue, 1)
+    if not nextItem or not IsValidVideoId(nextItem.videoId) then
+        return false
+    end
+
+    local now = GetServerTime()
+    state.source = 'youtube'
+    state.videoId = nextItem.videoId
+    state.stationId = nil
+    state.stationName = nil
+    state.genre = nil
+    state.streamUrl = nil
+    state.title = nextItem.title
+    state.author = nextItem.author
+    state.duration = nil
+    state.playing = true
+    state.position = 0.0
+    state.startedAt = now
+    state.updatedAt = now
+    state.revision = NextRevision()
+    state.vehicleEntity = vehicle or state.vehicleEntity
+
+    BroadcastState(networkId, state)
+    DebugPrint(('queue advance vehicle=%s video=%s reason=%s remaining=%s'):format(
+        networkId, state.videoId, reason or 'unspecified', #state.queue
+    ))
+    return true
+end
+
+RegisterNetEvent('acg_radio:server:addToQueue', function(request)
+    local playerSource = source
+    if IsRateLimited(playerSource, 'addToQueue') then
+        RejectRateLimited(playerSource, 'addToQueue')
+        return
+    end
+
+    if not Config.Queue or Config.Queue.Enabled ~= true then
+        Reject(playerSource, 'The radio queue is disabled.')
+        return
+    end
+
+    if type(request) ~= 'table' or not IsValidVideoId(request.videoId) then
+        Reject(playerSource, 'Invalid YouTube video ID.')
+        return
+    end
+
+    local networkId, vehicle, errorMessage = ValidateOccupiedVehicle(playerSource, request.vehicleNetworkId, true)
+    if not networkId then
+        Reject(playerSource, errorMessage)
+        return
+    end
+
+    local state = GetOrCreateState(networkId, GetServerTime(), vehicle)
+    state.queue = state.queue or {}
+    local maxItems = math.max(math.floor(tonumber(Config.Queue.MaxItems) or 20), 1)
+    if #state.queue >= maxItems then
+        Reject(playerSource, ('Queue is full (%s tracks).'):format(maxItems))
+        return
+    end
+
+    state.queue[#state.queue + 1] = {
+        videoId = request.videoId,
+        title = SanitizeText(request.title, 120),
+        author = SanitizeText(request.author, 80)
+    }
+    state.updatedAt = GetServerTime()
+    state.revision = NextRevision()
+
+    -- If nothing is playing, queued music starts immediately.
+    if not IsActiveRadioState(state) then
+        AdvanceQueue(networkId, state, vehicle, 'idle-add')
+    else
+        BroadcastState(networkId, state)
+    end
+end)
+
+RegisterNetEvent('acg_radio:server:removeQueueItem', function(request)
+    local playerSource = source
+    if IsRateLimited(playerSource, 'removeQueueItem') then
+        RejectRateLimited(playerSource, 'removeQueueItem')
+        return
+    end
+
+    if type(request) ~= 'table' or not IsValidNumber(request.index) then
+        Reject(playerSource, 'Invalid queue item.')
+        return
+    end
+
+    local networkId, vehicle, errorMessage = ValidateOccupiedVehicle(playerSource, request.vehicleNetworkId, true)
+    if not networkId then
+        Reject(playerSource, errorMessage)
+        return
+    end
+
+    local state = GetOrCreateState(networkId, GetServerTime(), vehicle)
+    local index = math.floor(request.index)
+    if type(state.queue) ~= 'table' or index < 1 or index > #state.queue then
+        Reject(playerSource, 'That queue item no longer exists.')
+        return
+    end
+
+    table.remove(state.queue, index)
+    state.updatedAt = GetServerTime()
+    state.revision = NextRevision()
+    BroadcastState(networkId, state)
+end)
+
+RegisterNetEvent('acg_radio:server:skip', function(request)
+    local playerSource = source
+    if IsRateLimited(playerSource, 'skip') then
+        RejectRateLimited(playerSource, 'skip')
+        return
+    end
+
+    local networkId, vehicle, errorMessage = ValidateOccupiedVehicle(
+        playerSource,
+        type(request) == 'table' and request.vehicleNetworkId or nil,
+        true
+    )
+    if not networkId then
+        Reject(playerSource, errorMessage)
+        return
+    end
+
+    local state = GetOrCreateState(networkId, GetServerTime(), vehicle)
+    if state.source ~= 'youtube' then
+        Reject(playerSource, 'There is no YouTube track to skip.')
+        return
+    end
+
+    if not AdvanceQueue(networkId, state, vehicle, 'manual-skip') then
+        StopVehicleRadioInternal(networkId, ('skip-empty player=%s'):format(playerSource))
+    end
+end)
+
+RegisterNetEvent('acg_radio:server:trackEnded', function(request)
+    local playerSource = source
+    if type(request) ~= 'table' or not IsValidVideoId(request.expectedVideoId) then
+        return
+    end
+
+    local networkId, vehicle = ValidateOccupiedVehicle(playerSource, request.vehicleNetworkId, false)
+    if not networkId then
+        return
+    end
+
+    local state = VehicleRadios[networkId]
+    if not state or state.source ~= 'youtube' or state.videoId ~= request.expectedVideoId then
+        return
+    end
+
+    if not AdvanceQueue(networkId, state, vehicle, 'track-ended') then
+        StopVehicleRadioInternal(networkId, ('track-ended player=%s'):format(playerSource), request.expectedVideoId)
+    end
+end)
+
+RegisterNetEvent('acg_radio:server:updateMetadata', function(request)
+    local playerSource = source
+    if type(request) ~= 'table' or not IsValidVideoId(request.videoId) then
+        return
+    end
+
+    local networkId, vehicle = ValidateOccupiedVehicle(playerSource, request.vehicleNetworkId, false)
+    if not networkId then
+        return
+    end
+
+    local state = VehicleRadios[networkId]
+    if not state or state.source ~= 'youtube' or state.videoId ~= request.videoId then
+        return
+    end
+
+    local changed = false
+    local title = SanitizeText(request.title, 120)
+    local author = SanitizeText(request.author, 80)
+    local duration = tonumber(request.duration)
+    if title and title ~= state.title then state.title = title; changed = true end
+    if author and author ~= state.author then state.author = author; changed = true end
+    if duration and IsValidNumber(duration) and duration > 0 and duration <= 86400 then
+        duration = math.floor(duration * 10 + 0.5) / 10
+        if duration ~= state.duration then state.duration = duration; changed = true end
+    end
+
+    if changed then
+        state.updatedAt = GetServerTime()
+        state.revision = NextRevision()
+        BroadcastState(networkId, state)
+    end
 end)
 
 RegisterNetEvent('acg_radio:server:playStation', function(request)
