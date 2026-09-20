@@ -6,6 +6,7 @@ const volumeSlider = document.getElementById('volume-slider');
 const volumeValue = document.getElementById('volume-value');
 const playbackSlider = document.getElementById('playback-slider');
 const playbackTime = document.getElementById('playback-time');
+const playbackProgress = document.querySelector('.playback-progress');
 const vehiclePlate = document.getElementById('vehicle-plate');
 const occupantRole = document.getElementById('occupant-role');
 const streamerModeIndicator = document.getElementById('streamer-mode-indicator');
@@ -15,6 +16,9 @@ const systemStatus = document.getElementById('system-status');
 const youtubeForm = document.getElementById('youtube-form');
 const youtubePlayButton = youtubeForm.querySelector('button[type="submit"]');
 const streamForm = document.getElementById('stream-form');
+const stationList = document.getElementById('station-list');
+const customStreamSection = document.getElementById('custom-stream-section');
+const streamPlayer = new Audio();
 
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
@@ -30,13 +34,20 @@ let youtubeRetryTimer = null;
 let youtubeReadyTimeout = null;
 let loadedVideoId = null;
 let provisionalVideoId = null;
+let provisionalCleanupTimer = null;
 let currentTitle = '';
 let pendingRadioState = null;
 let activeRadioState = null;
+let activeMediaSource = 'none';
+let loadedStreamUrl = null;
+let streamPlaybackStatus = 'idle';
+let streamPlaybackBlocked = false;
+let streamErrorNotified = false;
+let streamPlayAttempt = 0;
 let localEffectiveVolume = 0;
 let currentEffectiveVolume = 0;
 let targetEffectiveVolume = 0;
-let lastAppliedYouTubeVolume = -1;
+let lastAppliedMediaVolume = -1;
 let streamerMode = false;
 let debugEnabled = false;
 let maxVolume = 100;
@@ -48,6 +59,11 @@ let statusIsError = false;
 let syncSettings = {
     DriftCheckInterval: 5000,
     DriftThreshold: 2.5
+};
+let streamSettings = {
+    allowCustomUrls: false,
+    maxUrlLength: 2048,
+    stations: []
 };
 
 async function postNUI(event, data = {}) {
@@ -74,6 +90,15 @@ function debugYouTube(message) {
 
     console.log(`[acg_radio] ${message}`);
     postNUI('youtubeDebug', { message });
+}
+
+function debugStream(message) {
+    if (!debugEnabled) {
+        return;
+    }
+
+    console.log(`[acg_radio] ${message}`);
+    postNUI('streamDebug', { message });
 }
 
 function getYouTubeStateName(state) {
@@ -188,6 +213,16 @@ function applySettings(settings = {}) {
         volumeSlider.max = String(maxVolume);
     }
 
+    if (settings.streams && typeof settings.streams === 'object') {
+        streamSettings = {
+            allowCustomUrls: settings.streams.allowCustomUrls === true,
+            maxUrlLength: Math.max(Number(settings.streams.maxUrlLength) || 2048, 1),
+            stations: Array.isArray(settings.streams.stations) ? settings.streams.stations : []
+        };
+        renderStationList();
+        customStreamSection.hidden = !streamSettings.allowCustomUrls;
+    }
+
     if (settings.sync && typeof settings.sync === 'object') {
         const interval = Number(settings.sync.DriftCheckInterval);
         const threshold = Number(settings.sync.DriftThreshold);
@@ -205,6 +240,47 @@ function applySettings(settings = {}) {
     restartDriftTimer();
 }
 
+function renderStationList() {
+    stationList.replaceChildren();
+
+    if (streamSettings.stations.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'station-empty';
+        empty.textContent = 'No preset stations configured';
+        stationList.appendChild(empty);
+        return;
+    }
+
+    streamSettings.stations.forEach((station) => {
+        if (!station || typeof station.id !== 'string' || typeof station.name !== 'string') {
+            return;
+        }
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'station-card';
+        button.disabled = !canControl;
+        button.dataset.stationId = station.id;
+
+        const copy = document.createElement('span');
+        copy.className = 'station-copy';
+        const name = document.createElement('span');
+        name.className = 'station-name';
+        name.textContent = station.name;
+        const genre = document.createElement('span');
+        genre.className = 'station-genre';
+        genre.textContent = typeof station.genre === 'string' ? station.genre : 'Radio';
+        const action = document.createElement('span');
+        action.className = 'station-action';
+        action.textContent = 'PLAY';
+
+        copy.append(name, genre);
+        button.append(copy, action);
+        button.addEventListener('click', () => requestConfiguredStation(station.id));
+        stationList.appendChild(button);
+    });
+}
+
 function setStreamerMode(enabled, restoreVolume = null) {
     streamerMode = enabled === true;
     streamerModeIndicator.hidden = !streamerMode;
@@ -216,8 +292,8 @@ function setStreamerMode(enabled, restoreVolume = null) {
         }
     }
 
-    setYouTubeVolume(localEffectiveVolume);
-    applySmoothedYouTubeVolume(true);
+    setMediaVolume(localEffectiveVolume);
+    applySmoothedMediaVolume(true);
 }
 
 function showRadio(payload) {
@@ -243,7 +319,7 @@ function showRadio(payload) {
     isOpen = true;
     renderNowPlaying();
 
-    if (!youtubePlayerReady) {
+    if (!youtubePlayerReady && (!activeRadioState || activeRadioState.source === 'youtube')) {
         setStatus('LOADING YOUTUBE PLAYER', false, 10000);
     }
 }
@@ -312,6 +388,35 @@ function extractYouTubeVideoId(value) {
     } catch (_) {
         return null;
     }
+}
+
+function isValidStreamUrl(value) {
+    if (typeof value !== 'string' || value.length < 1 || value.length > streamSettings.maxUrlLength) {
+        return false;
+    }
+
+    try {
+        const url = new URL(value);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch (_) {
+        return false;
+    }
+}
+
+function switchMediaSource(nextSource) {
+    if (activeMediaSource === nextSource) {
+        return;
+    }
+
+    debugStream(`Switching media source ${activeMediaSource} -> ${nextSource}`);
+    if (activeMediaSource === 'youtube') {
+        stopYouTube();
+    } else if (activeMediaSource === 'stream') {
+        stopStream();
+    }
+
+    activeMediaSource = nextSource;
+    lastAppliedMediaVolume = -1;
 }
 
 function initializeYouTubePlayer() {
@@ -532,7 +637,7 @@ function handleYouTubeError(event) {
         pauseYouTube();
         renderNowPlaying();
     } else {
-        cancelPreparedPlayback();
+        cancelPreparedPlayback(eventVideoId);
     }
     setStatus(messages[code] || 'YOUTUBE PLAYBACK ERROR', true, 8000);
     postNUI('youtubeError', {
@@ -554,6 +659,7 @@ function handleYouTubeAutoplayBlocked() {
 }
 
 function playYouTube(videoId, position = 0, volume = 100) {
+    switchMediaSource('youtube');
     initializeYouTubePlayer();
     if (!youtubePlayerReady) {
         return false;
@@ -561,8 +667,8 @@ function playYouTube(videoId, position = 0, volume = 100) {
 
     loadedVideoId = videoId;
     debugYouTube(`Loading video: ${videoId}`);
-    setYouTubeVolume(volume);
-    applySmoothedYouTubeVolume(true);
+    setMediaVolume(volume);
+    applySmoothedMediaVolume(true);
     youtubePlayer.loadVideoById({
         videoId,
         startSeconds: Math.max(0, Number(position) || 0)
@@ -582,7 +688,7 @@ function pauseYouTube() {
 function resumeYouTube(volume = 100) {
     if (youtubePlayerReady && youtubePlayer) {
         youtubePlayer.unMute();
-        setYouTubeVolume(volume);
+        setMediaVolume(volume);
         youtubePlayer.playVideo();
         debugYouTubeSnapshot('Resume requested');
     }
@@ -593,20 +699,146 @@ function stopYouTube() {
         clearTimeout(youtubeRetryTimer);
         youtubeRetryTimer = null;
     }
+    if (provisionalCleanupTimer) {
+        clearTimeout(provisionalCleanupTimer);
+        provisionalCleanupTimer = null;
+    }
 
     pendingRadioState = null;
     loadedVideoId = null;
     provisionalVideoId = null;
     currentTitle = '';
     autoplayBlocked = false;
-    localEffectiveVolume = 0;
-    currentEffectiveVolume = 0;
-    targetEffectiveVolume = 0;
-    lastAppliedYouTubeVolume = -1;
-
     if (youtubePlayerReady && youtubePlayer) {
         youtubePlayer.stopVideo();
     }
+}
+
+function setStreamStatus(status) {
+    if (streamPlaybackStatus === status) {
+        return;
+    }
+
+    streamPlaybackStatus = status;
+    debugStream(`Stream status: ${status.toUpperCase()}`);
+    if (activeRadioState && activeRadioState.source === 'stream') {
+        renderNowPlaying();
+    }
+}
+
+function reportStreamError(error) {
+    setStreamStatus('error');
+    const code = streamPlayer.error ? streamPlayer.error.code : 'play-rejected';
+    debugStream(`Stream playback error code=${code} message=${error ? String(error) : 'media-error'}`);
+
+    if (!streamErrorNotified) {
+        streamErrorNotified = true;
+        postNUI('streamError', { code });
+    }
+}
+
+function stopStream() {
+    streamPlayAttempt += 1;
+    streamPlayer.pause();
+    streamPlayer.removeAttribute('src');
+    streamPlayer.load();
+    loadedStreamUrl = null;
+    streamPlaybackBlocked = false;
+    streamErrorNotified = false;
+    setStreamStatus('idle');
+}
+
+function pauseStream() {
+    streamPlayAttempt += 1;
+    streamPlayer.pause();
+    streamPlaybackBlocked = false;
+    setStreamStatus('paused');
+}
+
+async function resumeStream(reconnect = false) {
+    if (!loadedStreamUrl) {
+        return false;
+    }
+
+    if (reconnect) {
+        streamPlayer.src = loadedStreamUrl;
+        streamPlayer.load();
+    }
+
+    const attemptedUrl = loadedStreamUrl;
+    const attempt = ++streamPlayAttempt;
+    setStreamStatus('connecting');
+    try {
+        const playResult = streamPlayer.play();
+        if (playResult && typeof playResult.then === 'function') {
+            await playResult;
+        }
+        if (attempt !== streamPlayAttempt
+            || activeMediaSource !== 'stream'
+            || loadedStreamUrl !== attemptedUrl) {
+            return false;
+        }
+        streamPlaybackBlocked = false;
+        return true;
+    } catch (error) {
+        if (attempt !== streamPlayAttempt
+            || activeMediaSource !== 'stream'
+            || loadedStreamUrl !== attemptedUrl) {
+            return false;
+        }
+        streamPlaybackBlocked = true;
+        reportStreamError(error);
+        return false;
+    }
+}
+
+function playStream(url, volume, shouldPlay) {
+    switchMediaSource('stream');
+    const streamChanged = loadedStreamUrl !== url;
+
+    if (streamChanged) {
+        stopStream();
+        activeMediaSource = 'stream';
+        loadedStreamUrl = url;
+        streamErrorNotified = false;
+        streamPlayer.src = url;
+        streamPlayer.preload = 'none';
+        setMediaVolume(volume);
+        applySmoothedMediaVolume(true);
+        setStreamStatus('connecting');
+        streamPlayer.load();
+        debugStream(`Loading stream: ${activeRadioState ? activeRadioState.stationName : 'Unknown Station'}`);
+    }
+
+    if (shouldPlay) {
+        resumeStream(false);
+    } else {
+        pauseStream();
+    }
+}
+
+function initializeStreamPlayer() {
+    streamPlayer.preload = 'none';
+    streamPlayer.addEventListener('loadstart', () => {
+        if (activeMediaSource === 'stream') setStreamStatus('connecting');
+    });
+    streamPlayer.addEventListener('waiting', () => {
+        if (activeMediaSource === 'stream') setStreamStatus('buffering');
+    });
+    streamPlayer.addEventListener('stalled', () => {
+        if (activeMediaSource === 'stream') setStreamStatus('buffering');
+    });
+    streamPlayer.addEventListener('playing', () => {
+        if (activeMediaSource === 'stream') {
+            streamPlaybackBlocked = false;
+            streamErrorNotified = false;
+            setStreamStatus('live');
+            debugStream('Stream playback started');
+        }
+    });
+    streamPlayer.addEventListener('error', () => {
+        if (activeMediaSource === 'stream') reportStreamError();
+    });
 }
 
 function seekYouTube(position) {
@@ -615,11 +847,11 @@ function seekYouTube(position) {
     }
 }
 
-function setYouTubeVolume(volume) {
+function setMediaVolume(volume) {
     targetEffectiveVolume = clamp(Number(volume) || 0, 0, 100);
 }
 
-function applySmoothedYouTubeVolume(force = false) {
+function applySmoothedMediaVolume(force = false) {
     const desiredVolume = streamerMode ? 0 : targetEffectiveVolume;
     const difference = desiredVolume - currentEffectiveVolume;
 
@@ -630,11 +862,16 @@ function applySmoothedYouTubeVolume(force = false) {
     }
 
     const roundedVolume = Math.round(clamp(currentEffectiveVolume, 0, 100));
-    if (youtubePlayerReady
-        && youtubePlayer
-        && roundedVolume !== lastAppliedYouTubeVolume) {
+    if (roundedVolume === lastAppliedMediaVolume) {
+        return;
+    }
+
+    if (activeMediaSource === 'youtube' && youtubePlayerReady && youtubePlayer) {
         youtubePlayer.setVolume(roundedVolume);
-        lastAppliedYouTubeVolume = roundedVolume;
+        lastAppliedMediaVolume = roundedVolume;
+    } else if (activeMediaSource === 'stream') {
+        streamPlayer.volume = roundedVolume / 100;
+        lastAppliedMediaVolume = roundedVolume;
     }
 }
 
@@ -644,7 +881,7 @@ function startVolumeSmoothing() {
     }
 
     volumeSmoothingTimer = setInterval(() => {
-        applySmoothedYouTubeVolume(false);
+        applySmoothedMediaVolume(false);
     }, 75);
 }
 
@@ -674,30 +911,43 @@ function prepareYouTubePlayback(videoId, volume) {
 
     if (activeRadioState && activeRadioState.source === 'youtube') {
         youtubePlayer.unMute();
-        setYouTubeVolume(volume);
         debugYouTubeSnapshot('Existing player already activated');
         return true;
     }
 
     provisionalVideoId = videoId;
+    if (provisionalCleanupTimer) {
+        clearTimeout(provisionalCleanupTimer);
+    }
+    provisionalCleanupTimer = setTimeout(() => {
+        cancelPreparedPlayback(videoId);
+    }, 10000);
     loadedVideoId = videoId;
     currentTitle = '';
     debugYouTube(`Loading video: ${videoId}`);
     youtubePlayer.mute();
-    setYouTubeVolume(volume);
     youtubePlayer.loadVideoById({ videoId, startSeconds: 0 });
     debugYouTubeSnapshot('Prepared from PLAY interaction', 0);
     return true;
 }
 
-function cancelPreparedPlayback() {
-    if (!provisionalVideoId) {
+function cancelPreparedPlayback(expectedVideoId = null) {
+    if (!provisionalVideoId
+        || (expectedVideoId !== null && provisionalVideoId !== expectedVideoId)) {
         return;
     }
 
+    const cancelledVideoId = provisionalVideoId;
     provisionalVideoId = null;
-    loadedVideoId = null;
-    youtubePlayer.stopVideo();
+    if (provisionalCleanupTimer) {
+        clearTimeout(provisionalCleanupTimer);
+        provisionalCleanupTimer = null;
+    }
+    if (loadedVideoId === cancelledVideoId
+        && (!activeRadioState || activeRadioState.videoId !== cancelledVideoId)) {
+        loadedVideoId = null;
+        youtubePlayer.stopVideo();
+    }
     debugYouTube('Cancelled unapproved prepared playback');
 }
 
@@ -724,8 +974,14 @@ function applyRadioState(rawState, force = false) {
         return;
     }
 
-    const source = rawState.source === 'youtube' ? 'youtube' : 'none';
+    const requestedSource = rawState.source;
     const videoId = VIDEO_ID_PATTERN.test(rawState.videoId || '') ? rawState.videoId : null;
+    const streamUrl = isValidStreamUrl(rawState.streamUrl) ? rawState.streamUrl : null;
+    const source = requestedSource === 'youtube' && videoId
+        ? 'youtube'
+        : requestedSource === 'stream' && streamUrl
+            ? 'stream'
+            : 'none';
     const position = Math.max(0, Number(rawState.position) || 0);
     const volume = clamp(Number(rawState.volume) || 0, 0, maxVolume);
     const requestedLocalVolume = Number(rawState.localVolume);
@@ -736,7 +992,6 @@ function applyRadioState(rawState, force = false) {
     const playingChanged = !previousState || previousState.playing !== (rawState.playing === true);
 
     if (source !== 'youtube'
-        || !videoId
         || rawState.playing !== true
         || !previousState
         || previousState.videoId !== videoId
@@ -748,9 +1003,13 @@ function applyRadioState(rawState, force = false) {
         vehicleNetworkId: Number(rawState.vehicleNetworkId) || 0,
         source,
         videoId,
+        streamUrl,
+        stationId: typeof rawState.stationId === 'string' ? rawState.stationId : null,
+        stationName: typeof rawState.stationName === 'string' ? rawState.stationName : 'Custom Stream',
+        genre: typeof rawState.genre === 'string' ? rawState.genre : 'Radio',
         volume,
         localVolume: effectiveVolume,
-        playing: rawState.playing === true && source === 'youtube' && videoId !== null,
+        playing: rawState.playing === true && source !== 'none',
         position,
         revision: incomingRevision,
         receivedAt: performance.now()
@@ -758,6 +1017,10 @@ function applyRadioState(rawState, force = false) {
 
     if (videoId && videoId === provisionalVideoId) {
         provisionalVideoId = null;
+        if (provisionalCleanupTimer) {
+            clearTimeout(provisionalCleanupTimer);
+            provisionalCleanupTimer = null;
+        }
     }
 
     localEffectiveVolume = effectiveVolume;
@@ -768,14 +1031,39 @@ function applyRadioState(rawState, force = false) {
 
     volumeSlider.value = String(volume);
     updateVolumeDisplay();
-    setYouTubeVolume(effectiveVolume);
+    setMediaVolume(effectiveVolume);
 
-    if (source !== 'youtube' || !videoId) {
-        stopYouTube();
+    if (source === 'none') {
+        pendingRadioState = null;
+        switchMediaSource('none');
+        localEffectiveVolume = 0;
+        setMediaVolume(0);
+        applySmoothedMediaVolume(true);
         renderNowPlaying();
         return;
     }
 
+    if (source === 'stream') {
+        pendingRadioState = null;
+        const streamChanged = activeMediaSource !== 'stream' || loadedStreamUrl !== streamUrl;
+        switchMediaSource('stream');
+
+        if (streamChanged) {
+            playStream(streamUrl, effectiveVolume, activeRadioState.playing);
+        } else if (activeRadioState.playing) {
+            if (force || playingChanged || streamPlayer.paused || streamPlaybackStatus === 'error') {
+                resumeStream(playingChanged);
+            }
+        } else if (!streamPlayer.paused || streamPlaybackStatus !== 'paused') {
+            pauseStream();
+        }
+
+        setMediaVolume(effectiveVolume);
+        renderNowPlaying();
+        return;
+    }
+
+    switchMediaSource('youtube');
     initializeYouTubePlayer();
     if (!youtubePlayerReady) {
         pendingRadioState = rawState;
@@ -810,7 +1098,7 @@ function applyRadioState(rawState, force = false) {
         }
     }
 
-    setYouTubeVolume(effectiveVolume);
+    setMediaVolume(effectiveVolume);
     debugYouTubeSnapshot('Synchronized state applied', position);
     if (activeRadioState.playing) {
         verifyYouTubeAudio(videoId, position);
@@ -819,8 +1107,14 @@ function applyRadioState(rawState, force = false) {
 }
 
 function clearLocalPlayback() {
-    stopYouTube();
+    cancelPreparedPlayback();
+    switchMediaSource('none');
     activeRadioState = null;
+    pendingRadioState = null;
+    localEffectiveVolume = 0;
+    currentEffectiveVolume = 0;
+    targetEffectiveVolume = 0;
+    lastAppliedMediaVolume = -1;
     playbackSlider.value = '0';
     playbackSlider.max = '1';
     setRangeFill(playbackSlider, 0, 1);
@@ -840,7 +1134,7 @@ function applyLocalVolume(payload) {
         && Number(pendingRadioState.vehicleNetworkId) === Number(payload.vehicleNetworkId)) {
         pendingRadioState.localVolume = localEffectiveVolume;
     }
-    setYouTubeVolume(localEffectiveVolume);
+    setMediaVolume(localEffectiveVolume);
 }
 
 function updateVideoMetadata() {
@@ -869,6 +1163,8 @@ function updatePlaybackDisplay() {
     const hasYouTube = activeRadioState
         && activeRadioState.source === 'youtube'
         && activeRadioState.videoId;
+
+    playbackProgress.hidden = !hasYouTube;
 
     if (!hasYouTube) {
         playbackSlider.disabled = true;
@@ -900,12 +1196,40 @@ function renderNowPlaying() {
     const hasYouTube = activeRadioState
         && activeRadioState.source === 'youtube'
         && activeRadioState.videoId;
+    const hasStream = activeRadioState
+        && activeRadioState.source === 'stream'
+        && activeRadioState.streamUrl;
 
-    if (!hasYouTube) {
+    if (!hasYouTube && !hasStream) {
+        document.getElementById('now-playing-title').textContent = 'NOW PLAYING';
         trackTitle.textContent = 'No source selected';
-        trackSource.textContent = 'Choose a YouTube source below';
+        trackSource.textContent = 'Choose a source below';
         setPlaying(false);
         setPlaybackStatus('SYSTEM READY');
+        updatePlaybackDisplay();
+        return;
+    }
+
+    if (hasStream) {
+        const displayStatus = activeRadioState.playing
+            ? streamPlaybackStatus === 'live'
+                ? 'LIVE'
+                : streamPlaybackStatus === 'error'
+                    ? 'STREAM ERROR'
+                    : streamPlaybackStatus === 'buffering'
+                        ? 'BUFFERING...'
+                        : 'CONNECTING...'
+            : 'PAUSED';
+
+        document.getElementById('now-playing-title').textContent = 'LIVE RADIO';
+        trackTitle.textContent = activeRadioState.stationName || 'Custom Stream';
+        trackSource.textContent = `${displayStatus === 'LIVE' ? '● LIVE' : displayStatus} • ${activeRadioState.genre || 'Radio'} • ${activeRadioState.volume}%`;
+        setPlaying(activeRadioState.playing && !streamPlaybackBlocked);
+        if (streamPlaybackStatus === 'error') {
+            setStatus('STREAM ERROR', true, 2000);
+        } else {
+            setPlaybackStatus(displayStatus);
+        }
         updatePlaybackDisplay();
         return;
     }
@@ -914,6 +1238,7 @@ function renderNowPlaying() {
     const position = getPlayerPosition();
 
     updateVideoMetadata();
+    document.getElementById('now-playing-title').textContent = 'NOW PLAYING';
     trackTitle.textContent = currentTitle || activeRadioState.videoId;
     trackSource.textContent = `YouTube • ${playbackState} • ${formatTime(position)} • ${activeRadioState.volume}%`;
     setPlaying(activeRadioState.playing && !autoplayBlocked);
@@ -974,7 +1299,6 @@ window.addEventListener('message', (event) => {
     } else if (payload.action === 'updateVehicleRole') {
         setControlPermission(payload.isDriver === true, payload.driverOnly === true);
     } else if (payload.action === 'radioError') {
-        cancelPreparedPlayback();
         setStatus(payload.message || 'RADIO REQUEST FAILED', true, 5000);
     }
 });
@@ -991,6 +1315,17 @@ closeButton.addEventListener('click', closeRadio);
 document.querySelectorAll('.tab-button').forEach((button) => {
     button.addEventListener('click', () => selectTab(button.dataset.tab));
 });
+
+async function requestConfiguredStation(stationId) {
+    if (!canControl || typeof stationId !== 'string') {
+        return;
+    }
+
+    const result = await postNUI('playStation', { stationId });
+    if (result.ok) {
+        setStatus('WAITING FOR SERVER', false, 3000);
+    }
+}
 
 youtubeForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1016,19 +1351,33 @@ youtubeForm.addEventListener('submit', async (event) => {
     if (result.ok) {
         setStatus('WAITING FOR SERVER', false, 3000);
     } else {
-        cancelPreparedPlayback();
+        cancelPreparedPlayback(videoId);
     }
 });
 
 streamForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    await postNUI('playStream');
-    setStatus('STREAMS NOT AVAILABLE YET', true, 5000);
+    if (!streamSettings.allowCustomUrls) {
+        setStatus('CUSTOM STREAMS DISABLED', true, 5000);
+        return;
+    }
+
+    const streamUrl = document.getElementById('stream-url').value.trim();
+    const stationName = document.getElementById('station-name').value.trim();
+    if (!isValidStreamUrl(streamUrl)) {
+        setStatus('INVALID DIRECT STREAM URL', true, 5000);
+        return;
+    }
+
+    const result = await postNUI('playStream', { streamUrl, stationName });
+    if (result.ok) {
+        setStatus('WAITING FOR SERVER', false, 3000);
+    }
 });
 
 playPauseButton.addEventListener('click', async () => {
-    if (!activeRadioState || activeRadioState.source !== 'youtube') {
-        setStatus('NO YOUTUBE SOURCE', true, 3000);
+    if (!activeRadioState || activeRadioState.source === 'none') {
+        setStatus('NO RADIO SOURCE', true, 3000);
         return;
     }
 
@@ -1037,6 +1386,16 @@ playPauseButton.addEventListener('click', async () => {
         playPauseButton.disabled = !canControl;
         resumeYouTube(localEffectiveVolume);
         setStatus('RETRYING PLAYBACK', false, 3000);
+        return;
+    }
+
+    if (activeRadioState.source === 'stream'
+        && activeRadioState.playing
+        && streamPlaybackBlocked) {
+        streamPlaybackBlocked = false;
+        playPauseButton.disabled = !canControl;
+        resumeStream(false);
+        setStatus('RETRYING STREAM', false, 3000);
         return;
     }
 
@@ -1082,6 +1441,7 @@ playbackSlider.addEventListener('change', async () => {
 function initializeUI() {
     hideRadio();
     clearLocalPlayback();
+    initializeStreamPlayer();
     updateVolumeDisplay();
     restartDriftTimer();
     startVolumeSmoothing();

@@ -288,6 +288,10 @@ h1 {
     margin-top: 12px;
 }
 
+.playback-progress[hidden] {
+    display: none;
+}
+
 #playback-time {
     color: var(--muted);
     font-size: 10px;
@@ -526,6 +530,95 @@ input:focus {
     gap: 10px;
 }
 
+.station-browser {
+    margin-bottom: 14px;
+}
+
+.station-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.station-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 13px;
+    color: var(--text);
+    text-align: left;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.035);
+    transition: border-color 150ms ease, background 150ms ease;
+}
+
+.station-card:hover {
+    border-color: rgba(88, 230, 194, 0.42);
+    background: rgba(88, 230, 194, 0.07);
+}
+
+.station-card:disabled {
+    cursor: not-allowed;
+}
+
+.station-copy {
+    min-width: 0;
+}
+
+.station-name,
+.station-genre {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.station-name {
+    margin-bottom: 4px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.station-genre {
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.station-action {
+    color: var(--accent);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.10em;
+}
+
+.station-empty {
+    grid-column: 1 / -1;
+    margin: 0;
+    padding: 13px;
+    color: var(--muted);
+    font-size: 11px;
+    text-align: center;
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+}
+
+.custom-stream-section {
+    padding-top: 13px;
+    border-top: 1px solid var(--line);
+}
+
+.custom-stream-section[hidden] {
+    display: none;
+}
+
+.custom-stream-label {
+    color: var(--accent);
+    letter-spacing: 0.10em;
+}
+
 .stream-play {
     width: 100%;
     min-height: 42px;
@@ -604,6 +697,10 @@ input:focus {
     }
 
     .field-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .station-list {
         grid-template-columns: 1fr;
     }
 

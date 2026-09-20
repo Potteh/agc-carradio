@@ -89,11 +89,84 @@ local function IsValidVideoId(videoId)
         and videoId:match('^[%w_-]+$') ~= nil
 end
 
+local function IsValidIpv6Host(host)
+    local address = host:sub(2, -2)
+    if address == '' or address:find('[^0-9a-fA-F:]') or address:find(':::', 1, true) then
+        return false
+    end
+
+    local _, compressionCount = address:gsub('::', '')
+    if compressionCount > 1 then
+        return false
+    end
+
+    local groupCount = 0
+    for group in address:gmatch('[^:]+') do
+        if #group < 1 or #group > 4 then
+            return false
+        end
+        groupCount = groupCount + 1
+    end
+
+    if compressionCount == 1 then
+        return groupCount < 8
+    end
+
+    return groupCount == 8 and address:sub(1, 1) ~= ':' and address:sub(-1) ~= ':'
+end
+
+local function IsValidStreamUrl(streamUrl)
+    if type(streamUrl) ~= 'string' then
+        return false
+    end
+
+    local maximumLength = math.max(tonumber(Config.Streams and Config.Streams.MaxUrlLength) or 2048, 1)
+    if streamUrl == ''
+        or #streamUrl > maximumLength
+        or streamUrl:find('[%z\1-\31\127]')
+        or streamUrl:find('%s')
+        or not streamUrl:lower():match('^https?://') then
+        return false
+    end
+
+    local schemeEnd = streamUrl:find('://', 1, true)
+    local authority = schemeEnd and streamUrl:sub(schemeEnd + 3):match('^([^/%?#]+)') or nil
+    if not authority or authority == '' or authority:find('@', 1, true) then
+        return false
+    end
+
+    local host
+    local port
+    if authority:sub(1, 1) == '[' then
+        host = authority:match('^(%[[0-9a-fA-F:]+%])$')
+        if host then
+            port = ''
+        else
+            host, port = authority:match('^(%[[0-9a-fA-F:]+%]):(%d+)$')
+        end
+        if not host or not IsValidIpv6Host(host) then
+            return false
+        end
+    else
+        host, port = authority:match('^([%w%.%-]+):?(%d*)$')
+        if not host or not host:match('[%w]') then
+            return false
+        end
+    end
+
+    return port == '' or (tonumber(port) and tonumber(port) >= 1 and tonumber(port) <= 65535)
+end
+
 local function IsActiveRadioState(state)
-    return type(state) == 'table'
-        and state.source == 'youtube'
-        and IsValidVideoId(state.videoId)
-        and type(state.vehicleNetworkId) == 'number'
+    if type(state) ~= 'table' or type(state.vehicleNetworkId) ~= 'number' then
+        return false
+    end
+
+    if state.source == 'youtube' then
+        return IsValidVideoId(state.videoId)
+    end
+
+    return state.source == 'stream' and IsValidStreamUrl(state.streamUrl)
 end
 
 local function StoreRadioState(state)
@@ -114,6 +187,10 @@ local function StoreRadioState(state)
 end
 
 local function GetExpectedPosition(state)
+    if state.source ~= 'youtube' then
+        return 0.0
+    end
+
     local position = tonumber(state.position) or 0.0
     if state.playing and state.receivedAt then
         position = position + (GetElapsedMilliseconds(state.receivedAt, GetGameTimer()) / 1000.0)
@@ -172,6 +249,10 @@ local function BuildPlaybackState(state, localVolume)
         vehicleNetworkId = state.vehicleNetworkId,
         source = state.source,
         videoId = state.videoId,
+        stationId = state.stationId,
+        stationName = state.stationName,
+        genre = state.genre,
+        streamUrl = state.streamUrl,
         volume = state.volume,
         localVolume = localVolume,
         playing = state.playing == true,
@@ -444,6 +525,51 @@ local function RequestCurrentState(networkId)
     })
 end
 
+local function GetStreamUiSettings()
+    local stations = {}
+
+    for _, station in ipairs(Config.RadioStations or {}) do
+        if type(station) == 'table'
+            and type(station.id) == 'string'
+            and #station.id >= 1
+            and #station.id <= 64
+            and station.id:match('^[%w_-]+$')
+            and type(station.name) == 'string'
+            and not station.name:find('[%z\1-\31\127]')
+            and station.name:match('%S')
+            and IsValidStreamUrl(station.url) then
+            local genre = type(station.genre) == 'string'
+                and not station.genre:find('[%z\1-\31\127]')
+                and station.genre:match('%S')
+                and station.genre:match('^%s*(.-)%s*$'):sub(1, 32)
+                or 'Radio'
+            stations[#stations + 1] = {
+                id = station.id,
+                name = station.name:match('^%s*(.-)%s*$'):sub(1, 64),
+                genre = genre
+            }
+        end
+    end
+
+    return {
+        allowCustomUrls = Config.Streams and Config.Streams.AllowCustomUrls == true,
+        maxUrlLength = math.max(tonumber(Config.Streams and Config.Streams.MaxUrlLength) or 2048, 1),
+        stations = stations
+    }
+end
+
+local function GetNuiSettings()
+    return {
+        defaultVolume = Config.DefaultVolume,
+        maxVolume = Config.MaxVolume,
+        driverOnly = Config.DriverOnly,
+        sync = Config.Sync,
+        debug = Config.Debug,
+        streamerMode = streamerMode,
+        streams = GetStreamUiSettings()
+    }
+end
+
 local function OpenRadio()
     local vehicle = GetCurrentVehicle()
 
@@ -469,14 +595,7 @@ local function OpenRadio()
             plate = QBCore.Functions.GetPlate(vehicle),
             isDriver = lastDriverState
         },
-        settings = {
-            defaultVolume = Config.DefaultVolume,
-            maxVolume = Config.MaxVolume,
-            driverOnly = Config.DriverOnly,
-            sync = Config.Sync,
-            debug = Config.Debug,
-            streamerMode = streamerMode
-        }
+        settings = GetNuiSettings()
     })
     RequestCurrentState(networkId)
 end
@@ -562,9 +681,38 @@ RegisterNUICallback('playYoutube', function(data, callback)
     }, callback)
 end)
 
-RegisterNUICallback('playStream', function(_, callback)
-    QBCore.Functions.Notify('Direct radio streams are not available yet.', 'error')
-    callback({ ok = false, error = 'not_available' })
+RegisterNUICallback('playStation', function(data, callback)
+    local stationId = type(data) == 'table' and data.stationId or nil
+    if type(stationId) ~= 'string'
+        or #stationId < 1
+        or #stationId > 64
+        or not stationId:match('^[%w_-]+$') then
+        callback({ ok = false, error = 'invalid_station' })
+        return
+    end
+
+    SendControlRequest('acg_radio:server:playStation', {
+        stationId = stationId
+    }, callback)
+end)
+
+RegisterNUICallback('playStream', function(data, callback)
+    if not Config.Streams or Config.Streams.AllowCustomUrls ~= true then
+        callback({ ok = false, error = 'custom_streams_disabled' })
+        return
+    end
+
+    local streamUrl = type(data) == 'table' and data.streamUrl or nil
+    if not IsValidStreamUrl(streamUrl) then
+        QBCore.Functions.Notify('Enter a valid HTTP or HTTPS direct stream URL.', 'error')
+        callback({ ok = false, error = 'invalid_stream_url' })
+        return
+    end
+
+    SendControlRequest('acg_radio:server:playCustomStream', {
+        streamUrl = streamUrl,
+        stationName = type(data.stationName) == 'string' and data.stationName:sub(1, 64) or nil
+    }, callback)
 end)
 
 RegisterNUICallback('pause', function(_, callback)
@@ -648,6 +796,28 @@ RegisterNUICallback('youtubeDebug', function(data, callback)
     callback({ ok = true })
 end)
 
+RegisterNUICallback('streamError', function(data, callback)
+    local message = 'Unable to play this radio stream.'
+    if isRadioOpen then
+        QBCore.Functions.Notify(message, 'error')
+    end
+    if Config.Debug then
+        DebugPrint(('stream playback error code=%s'):format(
+            type(data) == 'table' and tostring(data.code or 'unknown') or 'unknown'
+        ))
+    end
+
+    callback({ ok = true })
+end)
+
+RegisterNUICallback('streamDebug', function(data, callback)
+    if Config.Debug and type(data) == 'table' and type(data.message) == 'string' then
+        DebugPrint(data.message:sub(1, 512))
+    end
+
+    callback({ ok = true })
+end)
+
 RegisterNUICallback('nuiReady', function(_, callback)
     local vehicle = GetCurrentVehicle()
     local networkId = GetVehicleNetworkId(vehicle)
@@ -660,8 +830,8 @@ RegisterNUICallback('nuiReady', function(_, callback)
 
     TriggerServerEvent('acg_radio:server:requestActiveRadios')
     SendNUIMessage({
-        action = 'setStreamerMode',
-        enabled = streamerMode
+        action = 'initialize',
+        settings = GetNuiSettings()
     })
 
     callback({ ok = true })
@@ -785,12 +955,7 @@ AddEventHandler('onClientResourceStart', function(resourceName)
     SetNuiFocus(false, false)
     SendNUIMessage({
         action = 'initialize',
-        settings = {
-            maxVolume = Config.MaxVolume,
-            sync = Config.Sync,
-            debug = Config.Debug,
-            streamerMode = streamerMode
-        }
+        settings = GetNuiSettings()
     })
     SendNUIMessage({ action = 'closeRadio' })
 end)

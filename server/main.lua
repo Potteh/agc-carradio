@@ -4,6 +4,7 @@ local VehicleRadios = {}
 local RequestTimes = {}
 local RateLimitWarnings = {}
 local revision = 0
+local adminMenuAvailable = nil
 
 local function DebugPrint(message)
     if Config.Debug then
@@ -31,6 +32,10 @@ local function GetElapsedSeconds(startedAt, now)
 end
 
 local function GetCurrentPosition(state, now)
+    if state.source ~= 'youtube' then
+        return 0.0
+    end
+
     if not state.playing then
         return state.position
     end
@@ -80,12 +85,168 @@ local function IsValidVideoId(videoId)
         and videoId:match('^[%w_-]+$') ~= nil
 end
 
+local function SanitizeText(value, maximumLength)
+    if type(value) ~= 'string' then
+        return nil
+    end
+
+    value = value:match('^%s*(.-)%s*$')
+    if value == '' or value:find('[%z\1-\31\127]') then
+        return nil
+    end
+
+    return value:sub(1, maximumLength)
+end
+
+local function IsValidIpv6Host(host)
+    local address = host:sub(2, -2)
+    if address == '' or address:find('[^0-9a-fA-F:]') or address:find(':::', 1, true) then
+        return false
+    end
+
+    local _, compressionCount = address:gsub('::', '')
+    if compressionCount > 1 then
+        return false
+    end
+
+    local groupCount = 0
+    for group in address:gmatch('[^:]+') do
+        if #group < 1 or #group > 4 then
+            return false
+        end
+        groupCount = groupCount + 1
+    end
+
+    if compressionCount == 1 then
+        return groupCount < 8
+    end
+
+    return groupCount == 8 and address:sub(1, 1) ~= ':' and address:sub(-1) ~= ':'
+end
+
+local function IsValidStreamUrl(streamUrl)
+    if type(streamUrl) ~= 'string' then
+        return false
+    end
+
+    local maximumLength = math.max(tonumber(Config.Streams and Config.Streams.MaxUrlLength) or 2048, 1)
+    if streamUrl == '' or #streamUrl > maximumLength or streamUrl:find('[%z\1-\31\127]') then
+        return false
+    end
+
+    if streamUrl:find('%s') or not streamUrl:lower():match('^https?://') then
+        return false
+    end
+
+    local schemeEnd = streamUrl:find('://', 1, true)
+    local authority = schemeEnd and streamUrl:sub(schemeEnd + 3):match('^([^/%?#]+)') or nil
+    if not authority or authority == '' or authority:find('@', 1, true) then
+        return false
+    end
+
+    local host
+    local port
+    if authority:sub(1, 1) == '[' then
+        host = authority:match('^(%[[0-9a-fA-F:]+%])$')
+        if host then
+            port = ''
+        else
+            host, port = authority:match('^(%[[0-9a-fA-F:]+%]):(%d+)$')
+        end
+        if not host or not IsValidIpv6Host(host) then
+            return false
+        end
+    else
+        host, port = authority:match('^([%w%.%-]+):?(%d*)$')
+        if not host or not host:match('[%w]') then
+            return false
+        end
+    end
+
+    return port == '' or (tonumber(port) and tonumber(port) >= 1 and tonumber(port) <= 65535)
+end
+
+local function GetRadioStationById(stationId)
+    if type(stationId) ~= 'string'
+        or #stationId < 1
+        or #stationId > 64
+        or not stationId:match('^[%w_-]+$') then
+        return nil
+    end
+
+    for _, station in ipairs(Config.RadioStations or {}) do
+        if type(station) == 'table'
+            and station.id == stationId
+            and IsValidStreamUrl(station.url) then
+            local name = SanitizeText(station.name, 64)
+            if name then
+                return {
+                    id = stationId,
+                    name = name,
+                    genre = SanitizeText(station.genre, 32) or 'Radio',
+                    url = station.url
+                }
+            end
+        end
+    end
+
+    return nil
+end
+
 local function IsValidNumber(value)
     return type(value) == 'number' and value == value and value ~= math.huge and value ~= -math.huge
 end
 
 local function Clamp(value, minimum, maximum)
     return math.max(minimum, math.min(maximum, value))
+end
+
+local function NormalizeNetworkId(networkId)
+    if not IsValidNumber(networkId)
+        or networkId <= 0
+        or networkId ~= math.floor(networkId) then
+        return nil
+    end
+
+    return networkId
+end
+
+local function GetAdminMenuResourceName()
+    local integrations = Config.Integrations
+    local adminMenu = integrations and integrations.AdminMenu
+
+    if not adminMenu or adminMenu.Enabled ~= true then
+        return nil
+    end
+
+    local resourceName = adminMenu.ResourceName
+    if type(resourceName) ~= 'string' or resourceName == '' then
+        return nil
+    end
+
+    return resourceName
+end
+
+
+local function IsAdminMenuAvailable()
+    local resourceName = GetAdminMenuResourceName()
+    return resourceName ~= nil and GetResourceState(resourceName) == 'started'
+end
+
+local function RefreshAdminMenuAvailability(forceUnavailable)
+    local resourceName = GetAdminMenuResourceName()
+    local available = not forceUnavailable and IsAdminMenuAvailable()
+
+    if adminMenuAvailable == available then
+        return
+    end
+
+    adminMenuAvailable = available
+    if available then
+        DebugPrint(('Optional admin integration available: %s'):format(resourceName))
+    else
+        DebugPrint('Optional admin integration unavailable; standalone mode')
+    end
 end
 
 local function ValidateOccupiedVehicle(playerSource, requestedNetworkId, requireDriver)
@@ -151,8 +312,7 @@ end
 
 local function BuildSnapshot(networkId, state)
     local now = GetServerTime()
-
-    return {
+    local snapshot = {
         vehicleNetworkId = networkId,
         source = state.source,
         videoId = state.videoId,
@@ -162,10 +322,128 @@ local function BuildSnapshot(networkId, state)
         revision = state.revision,
         serverTimestamp = now
     }
+
+    if state.source == 'stream' then
+        snapshot.stationId = state.stationId
+        snapshot.stationName = state.stationName
+        snapshot.genre = state.genre
+        snapshot.streamUrl = state.streamUrl
+    end
+
+    return snapshot
 end
 
 local function BroadcastState(networkId, state)
     TriggerClientEvent('acg_radio:client:syncState', -1, BuildSnapshot(networkId, state))
+end
+
+local function IsActiveRadioState(state)
+    if type(state) ~= 'table' then
+        return false
+    end
+
+    if state.source == 'youtube' then
+        return IsValidVideoId(state.videoId)
+    end
+
+    return state.source == 'stream' and IsValidStreamUrl(state.streamUrl)
+end
+
+local function StopVehicleRadioInternal(networkId, reason, expectedVideoId)
+    networkId = NormalizeNetworkId(networkId)
+    if not networkId then
+        return false
+    end
+
+    local state = VehicleRadios[networkId]
+    if not IsActiveRadioState(state) then
+        return false
+    end
+
+    if expectedVideoId ~= nil and state.videoId ~= expectedVideoId then
+        return false
+    end
+
+    local now = GetServerTime()
+    state.source = 'none'
+    state.videoId = false
+    state.stationId = nil
+    state.stationName = nil
+    state.genre = nil
+    state.streamUrl = nil
+    state.playing = false
+    state.position = 0.0
+    state.startedAt = now
+    state.updatedAt = now
+    state.revision = NextRevision()
+
+    BroadcastState(networkId, state)
+    DebugPrint(('stop vehicle=%s reason=%s'):format(networkId, reason or 'unspecified'))
+    return true
+end
+
+local function GetVehiclePlate(state)
+    local vehicle = state.vehicleEntity
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then
+        return nil
+    end
+
+    local success, plate = pcall(GetVehicleNumberPlateText, vehicle)
+    if not success or type(plate) ~= 'string' then
+        return nil
+    end
+
+    plate = plate:match('^%s*(.-)%s*$')
+    return plate ~= '' and plate:sub(1, 32) or nil
+end
+
+local function BuildPublicRadioState(networkId, state)
+    if not IsActiveRadioState(state) then
+        return nil
+    end
+
+    local publicState = {
+        netId = networkId,
+        plate = GetVehiclePlate(state),
+        source = state.source,
+        videoId = state.videoId,
+        volume = state.volume,
+        playing = state.playing == true
+    }
+
+    if state.source == 'youtube' then
+        publicState.position = GetCurrentPosition(state, GetServerTime())
+    else
+        publicState.stationId = state.stationId
+        publicState.stationName = state.stationName
+        publicState.genre = state.genre
+    end
+
+    return publicState
+end
+
+local function StartStreamState(networkId, vehicle, streamData)
+    local now = GetServerTime()
+    local previousState = GetOrCreateState(networkId, now, vehicle)
+    local state = {
+        source = 'stream',
+        videoId = false,
+        stationId = streamData.id,
+        stationName = streamData.name,
+        genre = streamData.genre,
+        streamUrl = streamData.url,
+        volume = previousState.volume,
+        playing = true,
+        position = 0.0,
+        startedAt = now,
+        updatedAt = now,
+        revision = NextRevision(),
+        vehicleEntity = vehicle
+    }
+
+    VehicleRadios[networkId] = state
+    BroadcastState(networkId, state)
+    return state
 end
 
 local function Reject(playerSource, message)
@@ -210,6 +488,78 @@ RegisterNetEvent('acg_radio:server:playYoutube', function(request)
     DebugPrint(('play player=%s vehicle=%s video=%s'):format(playerSource, networkId, state.videoId))
 end)
 
+RegisterNetEvent('acg_radio:server:playStation', function(request)
+    local playerSource = source
+    if IsRateLimited(playerSource, 'playStation') then
+        RejectRateLimited(playerSource, 'playStation')
+        return
+    end
+
+    if type(request) ~= 'table' then
+        Reject(playerSource, 'Invalid radio station request.')
+        return
+    end
+
+    local station = GetRadioStationById(request.stationId)
+    if not station then
+        Reject(playerSource, 'That configured radio station is unavailable.')
+        return
+    end
+
+    local networkId, vehicle, errorMessage = ValidateOccupiedVehicle(playerSource, request.vehicleNetworkId, true)
+    if not networkId then
+        Reject(playerSource, errorMessage)
+        return
+    end
+
+    StartStreamState(networkId, vehicle, station)
+    DebugPrint(('stream player=%s vehicle=%s station=%s'):format(playerSource, networkId, station.id))
+end)
+
+RegisterNetEvent('acg_radio:server:playCustomStream', function(request)
+    local playerSource = source
+    if IsRateLimited(playerSource, 'playCustomStream') then
+        RejectRateLimited(playerSource, 'playCustomStream')
+        return
+    end
+
+    if not Config.Streams or Config.Streams.AllowCustomUrls ~= true then
+        Reject(playerSource, 'Custom stream URLs are disabled.')
+        return
+    end
+
+    if type(request) ~= 'table' then
+        Reject(playerSource, 'Invalid custom stream request.')
+        return
+    end
+
+    local maximumLength = math.max(tonumber(Config.Streams.MaxUrlLength) or 2048, 1)
+    if type(request.streamUrl) ~= 'string' or #request.streamUrl > maximumLength then
+        Reject(playerSource, 'Enter a valid HTTP or HTTPS direct stream URL.')
+        return
+    end
+
+    local streamUrl = request.streamUrl:match('^%s*(.-)%s*$')
+    if not IsValidStreamUrl(streamUrl) then
+        Reject(playerSource, 'Enter a valid HTTP or HTTPS direct stream URL.')
+        return
+    end
+
+    local networkId, vehicle, errorMessage = ValidateOccupiedVehicle(playerSource, request.vehicleNetworkId, true)
+    if not networkId then
+        Reject(playerSource, errorMessage)
+        return
+    end
+
+    local stationName = SanitizeText(request.stationName, 64) or 'Custom Stream'
+    StartStreamState(networkId, vehicle, {
+        name = stationName,
+        genre = 'Custom',
+        url = streamUrl
+    })
+    DebugPrint(('stream player=%s vehicle=%s station=custom'):format(playerSource, networkId))
+end)
+
 RegisterNetEvent('acg_radio:server:pause', function(request)
     local playerSource = source
     if IsRateLimited(playerSource, 'pause') then
@@ -228,13 +578,17 @@ RegisterNetEvent('acg_radio:server:pause', function(request)
     end
 
     local state = GetOrCreateState(networkId, GetServerTime(), vehicle)
-    if not state or state.source ~= 'youtube' or not state.playing then
-        Reject(playerSource, 'There is no playing YouTube source to pause.')
+    if not IsActiveRadioState(state) or not state.playing then
+        Reject(playerSource, 'There is no playing radio source to pause.')
         return
     end
 
     local now = GetServerTime()
-    state.position = GetCurrentPosition(state, now)
+    if state.source == 'youtube' then
+        state.position = GetCurrentPosition(state, now)
+    else
+        state.position = 0.0
+    end
     state.playing = false
     state.startedAt = now
     state.updatedAt = now
@@ -262,8 +616,8 @@ RegisterNetEvent('acg_radio:server:resume', function(request)
     end
 
     local state = GetOrCreateState(networkId, GetServerTime(), vehicle)
-    if not state or state.source ~= 'youtube' or state.playing then
-        Reject(playerSource, 'There is no paused YouTube source to resume.')
+    if not IsActiveRadioState(state) or state.playing then
+        Reject(playerSource, 'There is no paused radio source to resume.')
         return
     end
 
@@ -312,8 +666,7 @@ RegisterNetEvent('acg_radio:server:stop', function(request)
         end
     end
 
-    local now = GetServerTime()
-    local state = GetOrCreateState(networkId, now, vehicle)
+    local state = GetOrCreateState(networkId, GetServerTime(), vehicle)
 
     if request.expectedVideoId ~= nil then
         if not IsValidVideoId(request.expectedVideoId) then
@@ -321,7 +674,7 @@ RegisterNetEvent('acg_radio:server:stop', function(request)
             return
         end
 
-        if state.source ~= 'youtube' or state.videoId ~= request.expectedVideoId then
+        if not IsActiveRadioState(state) or state.videoId ~= request.expectedVideoId then
             DebugPrint(('ignored stale stop player=%s vehicle=%s expected=%s'):format(
                 playerSource,
                 networkId,
@@ -331,16 +684,7 @@ RegisterNetEvent('acg_radio:server:stop', function(request)
         end
     end
 
-    state.source = 'none'
-    state.videoId = false
-    state.playing = false
-    state.position = 0.0
-    state.startedAt = now
-    state.updatedAt = now
-    state.revision = NextRevision()
-
-    BroadcastState(networkId, state)
-    DebugPrint(('stop player=%s vehicle=%s'):format(playerSource, networkId))
+    StopVehicleRadioInternal(networkId, ('player=%s'):format(playerSource), request.expectedVideoId)
 end)
 
 RegisterNetEvent('acg_radio:server:seek', function(request)
@@ -436,12 +780,98 @@ RegisterNetEvent('acg_radio:server:requestActiveRadios', function()
 
     local snapshots = {}
     for networkId, state in pairs(VehicleRadios) do
-        if state.source == 'youtube' then
+        if IsActiveRadioState(state) then
             snapshots[#snapshots + 1] = BuildSnapshot(networkId, state)
         end
     end
 
     TriggerClientEvent('acg_radio:client:activeRadios', playerSource, snapshots)
+end)
+
+exports('GetActiveRadios', function()
+    local radios = {}
+
+    for networkId, state in pairs(VehicleRadios) do
+        local publicState = BuildPublicRadioState(networkId, state)
+        if publicState then
+            radios[#radios + 1] = publicState
+        end
+    end
+
+    table.sort(radios, function(left, right)
+        return left.netId < right.netId
+    end)
+
+    return radios
+end)
+
+exports('GetVehicleRadio', function(networkId)
+    networkId = NormalizeNetworkId(networkId)
+    if not networkId then
+        return nil
+    end
+
+    return BuildPublicRadioState(networkId, VehicleRadios[networkId])
+end)
+
+exports('IsVehicleRadioActive', function(networkId)
+    networkId = NormalizeNetworkId(networkId)
+    return networkId ~= nil and IsActiveRadioState(VehicleRadios[networkId]) or false
+end)
+
+exports('GetActiveRadioCount', function()
+    local count = 0
+    for _, state in pairs(VehicleRadios) do
+        if IsActiveRadioState(state) then
+            count = count + 1
+        end
+    end
+
+    return count
+end)
+
+exports('StopVehicleRadio', function(networkId)
+    local invokingResource = GetInvokingResource() or 'unknown-server-resource'
+    local stopped = StopVehicleRadioInternal(
+        networkId,
+        ('external-resource=%s'):format(invokingResource)
+    )
+
+    if stopped then
+        DebugPrint(('External server resource stopped radio vehicle=%s resource=%s'):format(
+            networkId,
+            invokingResource
+        ))
+    end
+
+    return stopped
+end)
+
+exports('StopAllRadios', function()
+    local invokingResource = GetInvokingResource() or 'unknown-server-resource'
+    local activeNetworkIds = {}
+
+    for networkId, state in pairs(VehicleRadios) do
+        if IsActiveRadioState(state) then
+            activeNetworkIds[#activeNetworkIds + 1] = networkId
+        end
+    end
+
+    local stoppedCount = 0
+    for _, networkId in ipairs(activeNetworkIds) do
+        if StopVehicleRadioInternal(
+            networkId,
+            ('external-stop-all resource=%s'):format(invokingResource)
+        ) then
+            stoppedCount = stoppedCount + 1
+        end
+    end
+
+    DebugPrint(('External server resource stopped %s active radios resource=%s'):format(
+        stoppedCount,
+        invokingResource
+    ))
+    return stoppedCount
 end)
 
 CreateThread(function()
@@ -462,4 +892,18 @@ end)
 AddEventHandler('playerDropped', function()
     RequestTimes[source] = nil
     RateLimitWarnings[source] = nil
+end)
+
+AddEventHandler('onResourceStart', function(resourceName)
+    local adminResourceName = GetAdminMenuResourceName()
+    if resourceName == GetCurrentResourceName() or resourceName == adminResourceName then
+        RefreshAdminMenuAvailability(false)
+    end
+end)
+
+AddEventHandler('onResourceStop', function(resourceName)
+    local adminResourceName = GetAdminMenuResourceName()
+    if adminResourceName and resourceName == adminResourceName then
+        RefreshAdminMenuAvailability(true)
+    end
 end)

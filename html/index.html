@@ -99,20 +99,30 @@
                 </form>
 
                 <form id="stream-form" class="tab-panel" data-panel="stream">
-                    <div class="field-grid">
-                        <div class="field">
-                            <label for="stream-url">Direct audio stream URL</label>
-                            <input id="stream-url" type="url" placeholder="https://radio.example.com/live" autocomplete="off" required>
-                        </div>
-                        <div class="field station-field">
-                            <label for="station-name">Station name <span>OPTIONAL</span></label>
-                            <input id="station-name" type="text" maxlength="64" placeholder="Night Drive FM" autocomplete="off">
+                    <div class="station-browser">
+                        <label>Configured stations</label>
+                        <div id="station-list" class="station-list">
+                            <p class="station-empty">No preset stations configured</p>
                         </div>
                     </div>
-                    <button class="action-button stream-play" type="submit">
-                        <span>PLAY STREAM</span>
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l9 6-9 6z"></path></svg>
-                    </button>
+
+                    <div id="custom-stream-section" class="custom-stream-section">
+                        <label class="custom-stream-label">Custom direct stream</label>
+                        <div class="field-grid">
+                            <div class="field">
+                                <label for="stream-url">Direct audio stream URL</label>
+                                <input id="stream-url" type="url" placeholder="https://radio.example.com/live" autocomplete="off" required>
+                            </div>
+                            <div class="field station-field">
+                                <label for="station-name">Station name <span>OPTIONAL</span></label>
+                                <input id="station-name" type="text" maxlength="64" placeholder="Night Drive FM" autocomplete="off">
+                            </div>
+                        </div>
+                        <button class="action-button stream-play" type="submit">
+                            <span>PLAY STREAM</span>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l9 6-9 6z"></path></svg>
+                        </button>
+                    </div>
                 </form>
             </div>
 

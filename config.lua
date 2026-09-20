@@ -7,6 +7,14 @@ Config.DriverOnly = false
 Config.DefaultVolume = 50
 Config.MaxVolume = 100
 
+Config.Streams = {
+    AllowCustomUrls = true,
+    MaxUrlLength = 2048
+}
+
+-- Add browser-compatible direct MP3/AAC/Icecast/Shoutcast endpoints here.
+Config.RadioStations = {}
+
 Config.Audio = {
     MaxDistance = 35.0,
     FullVolumeDistance = 2.0,
@@ -26,6 +34,13 @@ Config.Sync = {
     DriftThreshold = 2.5,
     StateCleanupInterval = 60000,
     ControlCooldown = 150
+}
+
+Config.Integrations = {
+    AdminMenu = {
+        Enabled = true,
+        ResourceName = 'fivem_admin'
+    }
 }
 
 Config.Debug = false
