@@ -69,6 +69,9 @@ let streamerMode = false;
 let debugEnabled = false;
 let maxVolume = 100;
 let driftTimer = null;
+// Prevent the ended YouTube video from being restarted by a stale synchronized
+// state while the server is advancing the queue or removing the finished radio.
+let endedYouTubeGuard = null;
 let displayTimer = null;
 let volumeSmoothingTimer = null;
 let statusLockedUntil = 0;
@@ -882,12 +885,26 @@ function handleYouTubeStateChange(event) {
             return;
         }
 
-        if (activeRadioState) {
-            activeRadioState.playing = false;
-        }
+        // Latch this exact authoritative revision as finished. FiveM can still
+        // deliver/re-apply the old "playing=true" state for a short period while
+        // the server processes trackEnded. Without this guard, applyRadioState()
+        // can call playVideo()/seekTo() and restart the finished video.
+        endedYouTubeGuard = {
+            videoId: activeRadioState.videoId,
+            revision: activeRadioState.revision
+        };
+        activeRadioState.playing = false;
+
+        // Explicitly keep the iframe stopped until a NEW server revision arrives
+        // (next queued track or authoritative stop). This is local only and does
+        // not change server authority.
+        try {
+            youtubePlayer.pauseVideo();
+        } catch (_) {}
+
         renderNowPlaying();
         postNUI('youtubeEnded', {
-            videoId: activeRadioState ? activeRadioState.videoId : null
+            videoId: activeRadioState.videoId
         });
     }
 }
@@ -1261,6 +1278,27 @@ function applyRadioState(rawState, force = false) {
         return;
     }
 
+    const incomingVideoId = VIDEO_ID_PATTERN.test(rawState.videoId || '') ? rawState.videoId : null;
+    if (endedYouTubeGuard) {
+        const isFinishedRevision = rawState.source === 'youtube'
+            && incomingVideoId === endedYouTubeGuard.videoId
+            && incomingRevision <= endedYouTubeGuard.revision;
+
+        if (isFinishedRevision) {
+            // Ignore only the stale playback portion of this state. UI/queue data
+            // from the same revision is already represented locally; most
+            // importantly, do not seek/resume the finished iframe.
+            if (youtubePlayerReady && youtubePlayer) {
+                try { youtubePlayer.pauseVideo(); } catch (_) {}
+            }
+            return;
+        }
+
+        // A newer authoritative revision (queue advance, stop, new track, etc.)
+        // releases the end guard and may control playback normally.
+        endedYouTubeGuard = null;
+    }
+
     const requestedSource = rawState.source;
     const videoId = VIDEO_ID_PATTERN.test(rawState.videoId || '') ? rawState.videoId : null;
     const streamUrl = isValidStreamUrl(rawState.streamUrl) ? rawState.streamUrl : null;
@@ -1402,6 +1440,7 @@ function applyRadioState(rawState, force = false) {
 }
 
 function clearLocalPlayback() {
+    endedYouTubeGuard = null;
     cancelPreparedPlayback();
     switchMediaSource('none');
     activeRadioState = null;
@@ -1567,6 +1606,7 @@ function renderNowPlaying() {
 
 function checkPlaybackDrift() {
     if (!activeRadioState
+        || endedYouTubeGuard
         || activeRadioState.source !== 'youtube'
         || !activeRadioState.playing
         || autoplayBlocked
