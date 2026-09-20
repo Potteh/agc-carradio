@@ -1,6 +1,9 @@
 local QBCore = exports['qb-core']:GetCoreObject()
 
+local STREAMER_MODE_KVP = 'acg_radio_streamer_mode'
+
 local isRadioOpen = false
+local streamerMode = GetResourceKvpString(STREAMER_MODE_KVP) == '1'
 local currentVehicleNetworkId = 0
 local currentRadioVideoId = nil
 local lastDriverState = nil
@@ -119,20 +122,27 @@ local function GetExpectedPosition(state)
     return math.max(position, 0.0)
 end
 
-local function GetOutsideVolume(baseVolume, distance)
+local function GetOutsideAttenuation(distance)
     local maxDistance = math.max(tonumber(Config.Audio.MaxDistance) or 35.0, 0.1)
-    local fullDistance = Clamp(tonumber(Config.Audio.FullVolumeDistance) or 4.0, 0.0, maxDistance)
+    local fullDistance = Clamp(tonumber(Config.Audio.FullVolumeDistance) or 2.0, 0.0, maxDistance)
 
     if distance >= maxDistance then
-        return 0
+        return 0.0
     end
 
-    local attenuation = 1.0
-    if distance > fullDistance and maxDistance > fullDistance then
-        attenuation = 1.0 - ((distance - fullDistance) / (maxDistance - fullDistance))
+    local range = maxDistance - fullDistance
+    if range <= 0.0 then
+        return distance <= fullDistance and 1.0 or 0.0
     end
 
-    return baseVolume * (tonumber(Config.Audio.OutsideVehicleMultiplier) or 0.70) * attenuation
+    local normalized = Clamp((distance - fullDistance) / range, 0.0, 1.0)
+    local exponent = math.max(tonumber(Config.Audio.AttenuationExponent) or 1.5, 0.01)
+    return (1.0 - normalized) ^ exponent
+end
+
+local function GetOutsideVolume(baseVolume, distance)
+    local attenuation = GetOutsideAttenuation(distance)
+    return baseVolume * (tonumber(Config.Audio.OutsideVehicleMultiplier) or 1.0) * attenuation
 end
 
 local function CalculateEffectiveVolume(state, distance, isInside)
@@ -146,6 +156,10 @@ local function CalculateEffectiveVolume(state, distance, isInside)
     end
 
     volume = Clamp(volume, 0.0, 100.0)
+    if streamerMode then
+        return 0
+    end
+
     if volume < (tonumber(Config.Audio.MinAudibleVolume) or 1.0) then
         return 0
     end
@@ -190,11 +204,13 @@ local function SendLocalVolume(networkId, state, localVolume, distance)
         local now = GetGameTimer()
         if GetElapsedMilliseconds(lastVolumeDebugAt, now) >= 2000 then
             lastVolumeDebugAt = now
-            DebugPrint(('effective volume vehicle=%s base=%s local=%s distance=%.1f'):format(
+            local attenuation = selectedSourceInside and 1.0 or GetOutsideAttenuation(distance or 0.0)
+            DebugPrint(('proximity vehicle=%s distance=%.1f baseVolume=%s attenuation=%.2f effectiveVolume=%s'):format(
                 networkId,
+                distance or 0.0,
                 tonumber(state.volume) or 0,
-                localVolume,
-                distance or 0.0
+                attenuation,
+                localVolume
             ))
         end
     end
@@ -298,7 +314,7 @@ local function UpdateProximitySelection()
         targetNetworkId = occupiedNetworkId
         targetDistance = 0.0
         targetInside = true
-    elseif occupiedNetworkId ~= 0 and not Config.Audio.HearOutsideWhileInSilentVehicle then
+    elseif occupiedVehicle ~= 0 and not Config.Audio.HearOutsideWhileInSilentVehicle then
         targetNetworkId = 0
     else
         local nearestCandidate = nil
@@ -378,6 +394,40 @@ local function UpdateProximitySelection()
     SendLocalVolume(targetNetworkId, state, localVolume, targetDistance)
 end
 
+local function SetStreamerMode(enabled, showNotification)
+    streamerMode = enabled == true
+    SetResourceKvp(STREAMER_MODE_KVP, streamerMode and '1' or '0')
+
+    local restoreVolume = nil
+    local state = ActiveRadios[selectedSourceNetworkId]
+    if not streamerMode and state then
+        restoreVolume = CalculateEffectiveVolume(
+            state,
+            selectedSourceDistance,
+            selectedSourceInside
+        )
+    end
+
+    SendNUIMessage({
+        action = 'setStreamerMode',
+        enabled = streamerMode,
+        restoreVolume = restoreVolume
+    })
+
+    lastEffectiveVolume = -1
+    UpdateProximitySelection()
+
+    if showNotification then
+        if streamerMode then
+            QBCore.Functions.Notify('Streamer Mode Enabled - Vehicle music muted.', 'success')
+        else
+            QBCore.Functions.Notify('Streamer Mode Disabled - Vehicle music restored.', 'success')
+        end
+    end
+
+    DebugPrint(('streamer mode=%s'):format(streamerMode and 'enabled' or 'disabled'))
+end
+
 local function CloseRadio()
     isRadioOpen = false
     SetNuiFocus(false, false)
@@ -424,7 +474,8 @@ local function OpenRadio()
             maxVolume = Config.MaxVolume,
             driverOnly = Config.DriverOnly,
             sync = Config.Sync,
-            debug = Config.Debug
+            debug = Config.Debug,
+            streamerMode = streamerMode
         }
     })
     RequestCurrentState(networkId)
@@ -489,6 +540,10 @@ local function StopFailedSource(videoId)
 end
 
 RegisterCommand(Config.Command, OpenRadio, false)
+
+RegisterCommand(Config.StreamerModeCommand, function()
+    SetStreamerMode(not streamerMode, true)
+end, false)
 
 RegisterNUICallback('close', function(_, callback)
     CloseRadio()
@@ -604,6 +659,10 @@ RegisterNUICallback('nuiReady', function(_, callback)
     end
 
     TriggerServerEvent('acg_radio:server:requestActiveRadios')
+    SendNUIMessage({
+        action = 'setStreamerMode',
+        enabled = streamerMode
+    })
 
     callback({ ok = true })
 end)
@@ -729,7 +788,8 @@ AddEventHandler('onClientResourceStart', function(resourceName)
         settings = {
             maxVolume = Config.MaxVolume,
             sync = Config.Sync,
-            debug = Config.Debug
+            debug = Config.Debug,
+            streamerMode = streamerMode
         }
     })
     SendNUIMessage({ action = 'closeRadio' })

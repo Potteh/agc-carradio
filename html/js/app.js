@@ -8,6 +8,7 @@ const playbackSlider = document.getElementById('playback-slider');
 const playbackTime = document.getElementById('playback-time');
 const vehiclePlate = document.getElementById('vehicle-plate');
 const occupantRole = document.getElementById('occupant-role');
+const streamerModeIndicator = document.getElementById('streamer-mode-indicator');
 const trackTitle = document.getElementById('track-title');
 const trackSource = document.getElementById('track-source');
 const systemStatus = document.getElementById('system-status');
@@ -33,10 +34,15 @@ let currentTitle = '';
 let pendingRadioState = null;
 let activeRadioState = null;
 let localEffectiveVolume = 0;
+let currentEffectiveVolume = 0;
+let targetEffectiveVolume = 0;
+let lastAppliedYouTubeVolume = -1;
+let streamerMode = false;
 let debugEnabled = false;
 let maxVolume = 100;
 let driftTimer = null;
 let displayTimer = null;
+let volumeSmoothingTimer = null;
 let statusLockedUntil = 0;
 let statusIsError = false;
 let syncSettings = {
@@ -195,7 +201,23 @@ function applySettings(settings = {}) {
     }
 
     debugEnabled = settings.debug === true;
+    setStreamerMode(settings.streamerMode === true);
     restartDriftTimer();
+}
+
+function setStreamerMode(enabled, restoreVolume = null) {
+    streamerMode = enabled === true;
+    streamerModeIndicator.hidden = !streamerMode;
+
+    if (!streamerMode && Number.isFinite(Number(restoreVolume))) {
+        localEffectiveVolume = clamp(Number(restoreVolume), 0, 100);
+        if (activeRadioState) {
+            activeRadioState.localVolume = localEffectiveVolume;
+        }
+    }
+
+    setYouTubeVolume(localEffectiveVolume);
+    applySmoothedYouTubeVolume(true);
 }
 
 function showRadio(payload) {
@@ -539,12 +561,13 @@ function playYouTube(videoId, position = 0, volume = 100) {
 
     loadedVideoId = videoId;
     debugYouTube(`Loading video: ${videoId}`);
+    setYouTubeVolume(volume);
+    applySmoothedYouTubeVolume(true);
     youtubePlayer.loadVideoById({
         videoId,
         startSeconds: Math.max(0, Number(position) || 0)
     });
     youtubePlayer.unMute();
-    youtubePlayer.setVolume(clamp(Number(volume) || 0, 0, 100));
     youtubePlayer.playVideo();
     debugYouTubeSnapshot('Playback requested', position);
     return true;
@@ -559,7 +582,7 @@ function pauseYouTube() {
 function resumeYouTube(volume = 100) {
     if (youtubePlayerReady && youtubePlayer) {
         youtubePlayer.unMute();
-        youtubePlayer.setVolume(clamp(Number(volume) || 0, 0, 100));
+        setYouTubeVolume(volume);
         youtubePlayer.playVideo();
         debugYouTubeSnapshot('Resume requested');
     }
@@ -577,6 +600,9 @@ function stopYouTube() {
     currentTitle = '';
     autoplayBlocked = false;
     localEffectiveVolume = 0;
+    currentEffectiveVolume = 0;
+    targetEffectiveVolume = 0;
+    lastAppliedYouTubeVolume = -1;
 
     if (youtubePlayerReady && youtubePlayer) {
         youtubePlayer.stopVideo();
@@ -590,9 +616,36 @@ function seekYouTube(position) {
 }
 
 function setYouTubeVolume(volume) {
-    if (youtubePlayerReady && youtubePlayer) {
-        youtubePlayer.setVolume(clamp(Number(volume) || 0, 0, 100));
+    targetEffectiveVolume = clamp(Number(volume) || 0, 0, 100);
+}
+
+function applySmoothedYouTubeVolume(force = false) {
+    const desiredVolume = streamerMode ? 0 : targetEffectiveVolume;
+    const difference = desiredVolume - currentEffectiveVolume;
+
+    if (force || Math.abs(difference) < 0.1) {
+        currentEffectiveVolume = desiredVolume;
+    } else {
+        currentEffectiveVolume += difference * 0.25;
     }
+
+    const roundedVolume = Math.round(clamp(currentEffectiveVolume, 0, 100));
+    if (youtubePlayerReady
+        && youtubePlayer
+        && roundedVolume !== lastAppliedYouTubeVolume) {
+        youtubePlayer.setVolume(roundedVolume);
+        lastAppliedYouTubeVolume = roundedVolume;
+    }
+}
+
+function startVolumeSmoothing() {
+    if (volumeSmoothingTimer) {
+        return;
+    }
+
+    volumeSmoothingTimer = setInterval(() => {
+        applySmoothedYouTubeVolume(false);
+    }, 75);
 }
 
 function verifyYouTubeAudio(videoId, requestedPosition) {
@@ -621,7 +674,7 @@ function prepareYouTubePlayback(videoId, volume) {
 
     if (activeRadioState && activeRadioState.source === 'youtube') {
         youtubePlayer.unMute();
-        youtubePlayer.setVolume(clamp(Number(volume) || 0, 0, 100));
+        setYouTubeVolume(volume);
         debugYouTubeSnapshot('Existing player already activated');
         return true;
     }
@@ -631,7 +684,7 @@ function prepareYouTubePlayback(videoId, volume) {
     currentTitle = '';
     debugYouTube(`Loading video: ${videoId}`);
     youtubePlayer.mute();
-    youtubePlayer.setVolume(clamp(Number(volume) || 0, 0, 100));
+    setYouTubeVolume(volume);
     youtubePlayer.loadVideoById({ videoId, startSeconds: 0 });
     debugYouTubeSnapshot('Prepared from PLAY interaction', 0);
     return true;
@@ -692,6 +745,7 @@ function applyRadioState(rawState, force = false) {
     }
 
     activeRadioState = {
+        vehicleNetworkId: Number(rawState.vehicleNetworkId) || 0,
         source,
         videoId,
         volume,
@@ -782,6 +836,10 @@ function applyLocalVolume(payload) {
 
     localEffectiveVolume = clamp(Number(payload.volume), 0, 100);
     activeRadioState.localVolume = localEffectiveVolume;
+    if (pendingRadioState
+        && Number(pendingRadioState.vehicleNetworkId) === Number(payload.vehicleNetworkId)) {
+        pendingRadioState.localVolume = localEffectiveVolume;
+    }
     setYouTubeVolume(localEffectiveVolume);
 }
 
@@ -911,6 +969,8 @@ window.addEventListener('message', (event) => {
         clearLocalPlayback();
     } else if (payload.action === 'setLocalVolume') {
         applyLocalVolume(payload);
+    } else if (payload.action === 'setStreamerMode') {
+        setStreamerMode(payload.enabled === true, payload.restoreVolume);
     } else if (payload.action === 'updateVehicleRole') {
         setControlPermission(payload.isDriver === true, payload.driverOnly === true);
     } else if (payload.action === 'radioError') {
@@ -1024,6 +1084,7 @@ function initializeUI() {
     clearLocalPlayback();
     updateVolumeDisplay();
     restartDriftTimer();
+    startVolumeSmoothing();
 
     displayTimer = setInterval(() => {
         if (activeRadioState) {

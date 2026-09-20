@@ -208,6 +208,23 @@ h1 {
     background: rgba(88, 230, 194, 0.08);
 }
 
+.vehicle-badges {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.streamer-mode-indicator {
+    padding: 4px 7px;
+    color: #ffd28a;
+    border-radius: 5px;
+    background: rgba(255, 190, 92, 0.10);
+}
+
+.streamer-mode-indicator[hidden] {
+    display: none;
+}
+
 .now-playing {
     display: grid;
     grid-template-columns: 92px minmax(0, 1fr) auto;
@@ -597,7 +614,7 @@ input:focus {
 
 @media (max-width: 440px) {
     .brand .eyebrow,
-    .vehicle-strip,
+    .vehicle-strip > div:first-child,
     .radio-footer span:first-child {
         display: none;
     }
