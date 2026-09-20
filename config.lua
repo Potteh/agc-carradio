@@ -2,7 +2,7 @@ Config = {}
 
 Config.Command = 'carradio'
 Config.StreamerModeCommand = 'streamermode'
-Config.DriverOnly = true
+Config.DriverOnly = false
 
 Config.DefaultVolume = 50
 Config.MaxVolume = 100
