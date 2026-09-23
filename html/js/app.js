@@ -755,9 +755,11 @@ function buildEntertainmentUrl(service, target) {
     if (service === 'twitch') {
         const channel = extractChannelName(target, 'twitch');
         if (!channel) return null;
-        // Twitch requires a parent parameter. FiveM NUI is served from the cfx-nui resource host.
-        const parent = `cfx-nui-${GetParentResourceName()}`;
-        return `https://player.twitch.tv/?channel=${encodeURIComponent(channel)}&parent=${encodeURIComponent(parent)}&autoplay=true&muted=${muted}`;
+        // Twitch rejects FiveM's cfx-nui host as the embed parent. Route Twitch through
+        // our public HTTPS GitHub Pages bridge, which hosts the official Twitch player
+        // with parent=potteh.github.io. Keep the channel in the query string only.
+        const bridgeMuted = streamerMode ? '1' : '0';
+        return `https://potteh.github.io/agc-carradio/?channel=${encodeURIComponent(channel)}&muted=${bridgeMuted}`;
     }
     return null;
 }

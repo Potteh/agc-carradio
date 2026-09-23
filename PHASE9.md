@@ -8,6 +8,6 @@ Adds a local passenger entertainment tab for YouTube video, Twitch live channels
 - Streamer Mode reloads the entertainment embed muted.
 - YouTube uses the official embed player.
 - Kick uses the official `player.kick.com/<channel>` embed.
-- Twitch uses the official Twitch player with FiveM's `cfx-nui-<resource>` host as the required `parent`. Twitch may reject playback if its domain validation does not accept the FiveM NUI host; this is a platform limitation rather than a radio synchronization issue.
+- Twitch routes through the public HTTPS bridge at `https://potteh.github.io/agc-carradio/`, which hosts the official Twitch player with `parent=potteh.github.io`. The FiveM NUI embeds that bridge instead of embedding `player.twitch.tv` directly.
 
 No new server dependency was added. Existing radio, queue, proximity, persistence, and admin APIs are unchanged.
