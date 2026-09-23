@@ -93,6 +93,7 @@
             <nav class="source-tabs" aria-label="Audio source">
                 <button class="tab-button active" type="button" data-tab="youtube" aria-selected="true">YouTube</button>
                 <button class="tab-button" type="button" data-tab="stream" aria-selected="false">Radio Stream</button>
+                <button class="tab-button" type="button" data-tab="entertainment" aria-selected="false">Entertainment</button>
             </nav>
 
             <div class="source-content">
@@ -155,6 +156,40 @@
                         </button>
                     </div>
                 </form>
+
+                <section id="entertainment-panel" class="tab-panel entertainment-panel" data-panel="entertainment">
+                    <div class="entertainment-toolbar">
+                        <div>
+                            <p class="eyebrow">PASSENGER ENTERTAINMENT</p>
+                            <h3>Watch while parked or riding</h3>
+                        </div>
+                        <span id="entertainment-service-badge" class="role-badge">LOCAL PLAYER</span>
+                    </div>
+
+                    <div class="entertainment-services" role="group" aria-label="Video service">
+                        <button class="entertainment-service active" type="button" data-service="youtube">YouTube</button>
+                        <button class="entertainment-service" type="button" data-service="twitch">Twitch</button>
+                        <button class="entertainment-service" type="button" data-service="kick">Kick</button>
+                    </div>
+
+                    <form id="entertainment-form" class="entertainment-form">
+                        <label id="entertainment-input-label" for="entertainment-input">YouTube video URL</label>
+                        <div class="input-row">
+                            <input id="entertainment-input" type="text" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" required>
+                            <button class="action-button" type="submit"><span>WATCH</span></button>
+                            <button id="entertainment-stop" class="action-button secondary-action" type="button"><span>STOP</span></button>
+                        </div>
+                    </form>
+
+                    <div id="entertainment-screen" class="entertainment-screen">
+                        <div id="entertainment-placeholder" class="entertainment-placeholder">
+                            <strong>ENTERTAINMENT READY</strong>
+                            <span>Choose YouTube, Twitch, or Kick above.</span>
+                            <small>Video playback is local to you and does not change the vehicle radio for other players.</small>
+                        </div>
+                    </div>
+                    <p class="entertainment-note">For safety/RP, use video while parked or as a passenger. Platform embed restrictions still apply.</p>
+                </section>
             </div>
 
             <footer class="radio-footer">

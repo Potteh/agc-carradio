@@ -284,6 +284,55 @@ local function ValidateOccupiedVehicle(playerSource, requestedNetworkId, require
     return actualNetworkId, vehicle, nil
 end
 
+local function NormalizePlate(vehicle)
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then
+        return nil
+    end
+
+    local plate = GetVehicleNumberPlateText(vehicle)
+    if type(plate) ~= 'string' then
+        return nil
+    end
+
+    plate = plate:match('^%s*(.-)%s*$'):upper()
+    if plate == '' then
+        return nil
+    end
+
+    return plate:sub(1, 16)
+end
+
+local function PreferenceKey(plate)
+    return ('agc_carradio_vehicle_%s'):format(plate:gsub('[^%w%-_]', '_'))
+end
+
+local function LoadVehiclePreferences(vehicle)
+    if not Config.Persistence or Config.Persistence.Enabled ~= true then
+        return nil
+    end
+
+    local plate = NormalizePlate(vehicle)
+    if not plate then return nil end
+    local raw = GetResourceKvpString(PreferenceKey(plate))
+    if not raw or raw == '' then return { plate = plate } end
+
+    local ok, data = pcall(json.decode, raw)
+    if not ok or type(data) ~= 'table' then return { plate = plate } end
+    data.plate = plate
+    return data
+end
+
+local function SaveVehiclePreferences(vehicle, updates)
+    if not Config.Persistence or Config.Persistence.Enabled ~= true then return end
+    local plate = NormalizePlate(vehicle)
+    if not plate then return end
+
+    local existing = LoadVehiclePreferences(vehicle) or { plate = plate }
+    for key, value in pairs(updates or {}) do existing[key] = value end
+    existing.plate = nil
+    SetResourceKvp(PreferenceKey(plate), json.encode(existing))
+end
+
 local function CreateIdleState(now, vehicle)
     return {
         source = 'none',
@@ -305,6 +354,26 @@ local function GetOrCreateState(networkId, now, vehicle)
     -- A recycled network ID must never inherit another entity's radio state.
     if not state or state.vehicleEntity ~= vehicle then
         state = CreateIdleState(now, vehicle)
+        local prefs = LoadVehiclePreferences(vehicle)
+        if prefs and Config.Persistence and Config.Persistence.SaveVolume ~= false then
+            local savedVolume = tonumber(prefs.volume)
+            if savedVolume then state.volume = Clamp(math.floor(savedVolume + 0.5), 0, Config.MaxVolume) end
+        end
+
+        if prefs and Config.Persistence and Config.Persistence.RestoreLastStationOnEnter == true
+            and Config.Persistence.SaveConfiguredStation ~= false and type(prefs.stationId) == 'string' then
+            local station = GetRadioStationById(prefs.stationId)
+            if station then
+                state.source = 'stream'
+                state.stationId = station.id
+                state.stationName = station.name
+                state.genre = station.genre
+                state.streamUrl = station.url
+                state.playing = true
+                state.updatedAt = now
+                state.revision = NextRevision()
+            end
+        end
         VehicleRadios[networkId] = state
     end
 
@@ -465,6 +534,9 @@ local function StartStreamState(networkId, vehicle, streamData)
     }
 
     VehicleRadios[networkId] = state
+    if streamData.id and Config.Persistence and Config.Persistence.SaveConfiguredStation ~= false then
+        SaveVehiclePreferences(vehicle, { stationId = streamData.id })
+    end
     BroadcastState(networkId, state)
     return state
 end
@@ -965,6 +1037,9 @@ RegisterNetEvent('acg_radio:server:setVolume', function(request)
     local now = GetServerTime()
     local state = GetOrCreateState(networkId, now, vehicle)
     state.volume = Clamp(math.floor(request.volume + 0.5), 0, Config.MaxVolume)
+    if Config.Persistence and Config.Persistence.SaveVolume ~= false then
+        SaveVehiclePreferences(vehicle, { volume = state.volume })
+    end
     state.updatedAt = now
     state.revision = NextRevision()
 

@@ -31,6 +31,13 @@ const streamForm = document.getElementById('stream-form');
 const stationList = document.getElementById('station-list');
 const customStreamSection = document.getElementById('custom-stream-section');
 const streamPlayer = new Audio();
+const entertainmentForm = document.getElementById('entertainment-form');
+const entertainmentInput = document.getElementById('entertainment-input');
+const entertainmentInputLabel = document.getElementById('entertainment-input-label');
+const entertainmentScreen = document.getElementById('entertainment-screen');
+const entertainmentPlaceholder = document.getElementById('entertainment-placeholder');
+const entertainmentStopButton = document.getElementById('entertainment-stop');
+const entertainmentServiceBadge = document.getElementById('entertainment-service-badge');
 
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
@@ -66,6 +73,9 @@ let currentEffectiveVolume = 0;
 let targetEffectiveVolume = 0;
 let lastAppliedMediaVolume = -1;
 let streamerMode = false;
+let entertainmentService = 'youtube';
+let entertainmentActive = false;
+let entertainmentTarget = null;
 let debugEnabled = false;
 let maxVolume = 100;
 let driftTimer = null;
@@ -583,6 +593,10 @@ function setStreamerMode(enabled, restoreVolume = null) {
 
     setMediaVolume(localEffectiveVolume);
     applySmoothedMediaVolume(true);
+
+    if (entertainmentActive && entertainmentTarget) {
+        loadEntertainment(entertainmentService, entertainmentTarget, true);
+    }
 }
 
 function showRadio(payload) {
@@ -614,6 +628,7 @@ function showRadio(payload) {
 }
 
 function hideRadio() {
+    stopEntertainment();
     radioShell.classList.remove('visible');
     radioShell.setAttribute('aria-hidden', 'true');
     radioShell.hidden = true;
@@ -690,6 +705,102 @@ function isValidStreamUrl(value) {
     } catch (_) {
         return false;
     }
+}
+
+function setEntertainmentService(service) {
+    if (!['youtube', 'twitch', 'kick'].includes(service)) return;
+    entertainmentService = service;
+    document.querySelectorAll('.entertainment-service').forEach((button) => {
+        button.classList.toggle('active', button.dataset.service === service);
+    });
+
+    const labels = {
+        youtube: ['YouTube video URL', 'https://www.youtube.com/watch?v=...'],
+        twitch: ['Twitch channel or URL', 'twitch.tv/channelname'],
+        kick: ['Kick channel or URL', 'kick.com/channelname']
+    };
+    entertainmentInputLabel.textContent = labels[service][0];
+    entertainmentInput.placeholder = labels[service][1];
+    entertainmentServiceBadge.textContent = service.toUpperCase();
+}
+
+function extractChannelName(value, service) {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (/^[A-Za-z0-9_\-]{2,64}$/.test(trimmed)) return trimmed;
+    try {
+        const url = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+        const host = url.hostname.toLowerCase().replace(/^www\./, '');
+        const allowed = service === 'twitch' ? ['twitch.tv', 'm.twitch.tv'] : ['kick.com'];
+        if (!allowed.includes(host)) return null;
+        const channel = url.pathname.split('/').filter(Boolean)[0] || '';
+        return /^[A-Za-z0-9_\-]{2,64}$/.test(channel) ? channel : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function buildEntertainmentUrl(service, target) {
+    const muted = streamerMode ? 'true' : 'false';
+    if (service === 'youtube') {
+        const videoId = extractYouTubeVideoId(target);
+        if (!videoId) return null;
+        return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?autoplay=1&controls=1&playsinline=1`;
+    }
+    if (service === 'kick') {
+        const channel = extractChannelName(target, 'kick');
+        if (!channel) return null;
+        return `https://player.kick.com/${encodeURIComponent(channel)}?autoplay=true&muted=${muted}`;
+    }
+    if (service === 'twitch') {
+        const channel = extractChannelName(target, 'twitch');
+        if (!channel) return null;
+        // Twitch requires a parent parameter. FiveM NUI is served from the cfx-nui resource host.
+        const parent = `cfx-nui-${GetParentResourceName()}`;
+        return `https://player.twitch.tv/?channel=${encodeURIComponent(channel)}&parent=${encodeURIComponent(parent)}&autoplay=true&muted=${muted}`;
+    }
+    return null;
+}
+
+function loadEntertainment(service, target, preserveInput = false) {
+    const src = buildEntertainmentUrl(service, target);
+    if (!src) {
+        setStatus(`INVALID ${service.toUpperCase()} ${service === 'youtube' ? 'URL' : 'CHANNEL'}`, true, 5000);
+        return false;
+    }
+
+    entertainmentScreen.innerHTML = '';
+    const iframe = document.createElement('iframe');
+    iframe.className = 'entertainment-frame';
+    iframe.src = src;
+    iframe.title = `${service} entertainment player`;
+    iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+    iframe.allowFullscreen = true;
+    iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+    entertainmentScreen.appendChild(iframe);
+
+    entertainmentService = service;
+    entertainmentTarget = target;
+    entertainmentActive = true;
+    if (!preserveInput) entertainmentInput.value = target;
+    lastAppliedMediaVolume = -1;
+    applySmoothedMediaVolume(true);
+    setStatus(`${service.toUpperCase()} ENTERTAINMENT ACTIVE`, false, 3000);
+    return true;
+}
+
+function stopEntertainment() {
+    if (!entertainmentScreen) return;
+    entertainmentScreen.innerHTML = '';
+    const placeholder = document.createElement('div');
+    placeholder.id = 'entertainment-placeholder';
+    placeholder.className = 'entertainment-placeholder';
+    placeholder.innerHTML = '<strong>ENTERTAINMENT READY</strong><span>Choose YouTube, Twitch, or Kick above.</span><small>Video playback is local to you and does not change the vehicle radio for other players.</small>';
+    entertainmentScreen.appendChild(placeholder);
+    entertainmentActive = false;
+    entertainmentTarget = null;
+    lastAppliedMediaVolume = -1;
+    applySmoothedMediaVolume(true);
 }
 
 function switchMediaSource(nextSource) {
@@ -1156,7 +1267,7 @@ function setMediaVolume(volume) {
 }
 
 function applySmoothedMediaVolume(force = false) {
-    const desiredVolume = streamerMode ? 0 : targetEffectiveVolume;
+    const desiredVolume = (streamerMode || entertainmentActive) ? 0 : targetEffectiveVolume;
     const difference = desiredVolume - currentEffectiveVolume;
 
     if (force || Math.abs(difference) < 0.1) {
@@ -1686,6 +1797,21 @@ async function requestConfiguredStation(stationId) {
     }
 }
 
+document.querySelectorAll('.entertainment-service').forEach((button) => {
+    button.addEventListener('click', () => setEntertainmentService(button.dataset.service));
+});
+
+entertainmentForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const value = entertainmentInput.value.trim();
+    loadEntertainment(entertainmentService, value);
+});
+
+entertainmentStopButton.addEventListener('click', () => {
+    stopEntertainment();
+    setStatus('ENTERTAINMENT STOPPED', false, 2500);
+});
+
 queueAddButton.addEventListener('click', async () => {
     if (!canControl || !queueSettings.enabled) return;
     const url = document.getElementById('youtube-url').value.trim();
@@ -1834,6 +1960,7 @@ function initializeUI() {
     hideRadio();
     clearLocalPlayback();
     initializeStreamPlayer();
+    setEntertainmentService('youtube');
     updateVolumeDisplay();
     renderQueue();
     restartDriftTimer();

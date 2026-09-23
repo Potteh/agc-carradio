@@ -222,6 +222,47 @@ local function GetOutsideVolume(baseVolume, distance)
     return baseVolume * (tonumber(Config.Audio.OutsideVehicleMultiplier) or 1.0) * attenuation
 end
 
+local function GetVehicleAcousticMultiplier(state, isInside)
+    local cfg = Config.VehicleAudio or {}
+    local vehicle = ResolveVehicle(state.vehicleNetworkId)
+    if vehicle == 0 then return 1.0 end
+
+    local engineRunning = GetIsVehicleEngineRunning(vehicle)
+    if isInside then
+        if not engineRunning then
+            return Clamp(tonumber(cfg.EngineOffInsideMultiplier) or 0.35, 0.0, 1.0)
+        end
+        return 1.0
+    end
+
+    local cabin = Clamp(tonumber(cfg.ClosedCabinOutsideMultiplier) or 0.35, 0.0, 1.0)
+    local windowMultiplier = Clamp(tonumber(cfg.WindowOpenOutsideMultiplier) or 0.70, 0.0, 1.0)
+    local doorMultiplier = Clamp(tonumber(cfg.DoorOpenOutsideMultiplier) or 1.0, 0.0, 1.0)
+    local threshold = tonumber(cfg.DoorOpenThreshold) or 0.05
+
+    -- Broken/rolled-down windows are treated as open. Check the standard four cabin windows.
+    for windowIndex = 0, 3 do
+        if not IsVehicleWindowIntact(vehicle, windowIndex) then
+            cabin = math.max(cabin, windowMultiplier)
+            break
+        end
+    end
+
+    -- Any open passenger/driver door lets substantially more sound escape.
+    for doorIndex = 0, 5 do
+        if GetVehicleDoorAngleRatio(vehicle, doorIndex) > threshold then
+            cabin = math.max(cabin, doorMultiplier)
+            break
+        end
+    end
+
+    if not engineRunning then
+        cabin = cabin * Clamp(tonumber(cfg.EngineOffOutsideMultiplier) or 0.20, 0.0, 1.0)
+    end
+
+    return Clamp(cabin, 0.0, 1.0)
+end
+
 local function CalculateEffectiveVolume(state, distance, isInside)
     local baseVolume = Clamp(tonumber(state.volume) or 0.0, 0.0, Config.MaxVolume)
     local volume
@@ -232,15 +273,10 @@ local function CalculateEffectiveVolume(state, distance, isInside)
         volume = GetOutsideVolume(baseVolume, distance or Config.Audio.MaxDistance)
     end
 
+    volume = volume * GetVehicleAcousticMultiplier(state, isInside)
     volume = Clamp(volume, 0.0, 100.0)
-    if streamerMode then
-        return 0
-    end
-
-    if volume < (tonumber(Config.Audio.MinAudibleVolume) or 1.0) then
-        return 0
-    end
-
+    if streamerMode then return 0 end
+    if volume < (tonumber(Config.Audio.MinAudibleVolume) or 1.0) then return 0 end
     return math.floor(volume + 0.5)
 end
 
