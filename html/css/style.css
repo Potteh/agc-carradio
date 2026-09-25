@@ -1084,3 +1084,96 @@ input:focus {
         min-height: 260px;
     }
 }
+
+
+/* Floating/resizable infotainment window */
+.radio-shell.visible {
+    display: block;
+    background: transparent;
+}
+
+.radio-panel.window-managed {
+    position: absolute;
+    margin: 0;
+    min-width: 520px;
+    min-height: 420px;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    overflow: auto;
+    resize: none;
+    transform: none !important;
+}
+
+.radio-header {
+    cursor: move;
+    user-select: none;
+}
+
+.radio-header button,
+.radio-header input {
+    cursor: pointer;
+}
+
+.window-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.window-reset-button {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 9px;
+    background: rgba(255,255,255,.045);
+    color: var(--muted);
+    font-size: 9px;
+    font-weight: 750;
+    letter-spacing: .08em;
+    cursor: pointer;
+}
+
+.window-reset-button:hover {
+    color: var(--text);
+    border-color: var(--line-strong);
+}
+
+.window-resize-handle {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 22px;
+    height: 22px;
+    cursor: nwse-resize;
+    z-index: 50;
+}
+
+.window-resize-handle::after {
+    content: '';
+    position: absolute;
+    right: 5px;
+    bottom: 5px;
+    width: 9px;
+    height: 9px;
+    border-right: 2px solid rgba(255,255,255,.5);
+    border-bottom: 2px solid rgba(255,255,255,.5);
+}
+
+/* Let Entertainment use the space users give the floating window. */
+.radio-panel.window-managed .entertainment-screen {
+    min-height: 300px;
+    height: clamp(300px, 48vh, 620px);
+    aspect-ratio: auto;
+}
+
+.radio-panel.window-managed .entertainment-frame {
+    min-width: 0;
+    min-height: 0;
+}
+
+@media (max-width: 620px), (max-height: 690px) {
+    .radio-panel.window-managed {
+        min-width: min(420px, calc(100vw - 24px));
+        min-height: 360px;
+    }
+    .window-reset-button { display: none; }
+}

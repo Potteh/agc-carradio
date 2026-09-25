@@ -1,5 +1,9 @@
 const radioShell = document.getElementById('radio-shell');
 const closeButton = document.getElementById('close-button');
+const radioPanel = document.getElementById('radio-panel');
+const radioHeader = document.querySelector('.radio-header');
+const windowResizeHandle = document.getElementById('window-resize-handle');
+const resetWindowButton = document.getElementById('reset-window-button');
 const playPauseButton = document.getElementById('play-pause-button');
 const stopButton = document.getElementById('stop-button');
 const skipButton = document.getElementById('skip-button');
@@ -97,6 +101,90 @@ let recentHistory = [];
 let lastHistoryVideoId = null;
 const FAVORITES_STORAGE_KEY = 'acg_radio_favorites_v1';
 const HISTORY_STORAGE_KEY = 'acg_radio_history_v1';
+const WINDOW_STORAGE_KEY = 'agc_carradio_window_v1';
+const WINDOW_MARGIN = 12;
+const WINDOW_MIN_WIDTH = 520;
+const WINDOW_MIN_HEIGHT = 420;
+let windowGeometry = null;
+let windowPointerMode = null;
+let windowPointerStart = null;
+
+function clampWindowGeometry(geometry) {
+    const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+    const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+    const minWidth = Math.min(WINDOW_MIN_WIDTH, Math.max(320, vw - WINDOW_MARGIN * 2));
+    const minHeight = Math.min(WINDOW_MIN_HEIGHT, Math.max(300, vh - WINDOW_MARGIN * 2));
+    const width = clamp(Number(geometry.width) || 760, minWidth, Math.max(minWidth, vw - WINDOW_MARGIN * 2));
+    const height = clamp(Number(geometry.height) || Math.min(760, vh - 48), minHeight, Math.max(minHeight, vh - WINDOW_MARGIN * 2));
+    const x = clamp(Number(geometry.x) || WINDOW_MARGIN, WINDOW_MARGIN, Math.max(WINDOW_MARGIN, vw - width - WINDOW_MARGIN));
+    const y = clamp(Number(geometry.y) || WINDOW_MARGIN, WINDOW_MARGIN, Math.max(WINDOW_MARGIN, vh - height - WINDOW_MARGIN));
+    return { x, y, width, height };
+}
+
+function defaultWindowGeometry() {
+    const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+    const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+    const width = Math.min(760, Math.max(520, vw - 48));
+    const height = Math.min(760, Math.max(520, vh - 80));
+    return clampWindowGeometry({ x: (vw - width) / 2, y: (vh - height) / 2, width, height });
+}
+
+function loadWindowGeometry() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(WINDOW_STORAGE_KEY) || 'null');
+        if (saved && typeof saved === 'object') return clampWindowGeometry(saved);
+    } catch (_) {}
+    return defaultWindowGeometry();
+}
+
+function applyWindowGeometry(save = false) {
+    if (!radioPanel) return;
+    windowGeometry = clampWindowGeometry(windowGeometry || loadWindowGeometry());
+    radioPanel.classList.add('window-managed');
+    radioPanel.style.left = `${windowGeometry.x}px`;
+    radioPanel.style.top = `${windowGeometry.y}px`;
+    radioPanel.style.width = `${windowGeometry.width}px`;
+    radioPanel.style.height = `${windowGeometry.height}px`;
+    if (save) {
+        try { localStorage.setItem(WINDOW_STORAGE_KEY, JSON.stringify(windowGeometry)); } catch (_) {}
+    }
+}
+
+function resetWindowGeometry() {
+    windowGeometry = defaultWindowGeometry();
+    applyWindowGeometry(true);
+}
+
+function beginWindowPointer(event, mode) {
+    if (!isOpen || event.button !== 0) return;
+    if (mode === 'drag' && event.target.closest('button, input, select, textarea, a')) return;
+    event.preventDefault();
+    windowPointerMode = mode;
+    windowPointerStart = { x: event.clientX, y: event.clientY, geometry: { ...windowGeometry } };
+    window.addEventListener('pointermove', handleWindowPointerMove);
+    window.addEventListener('pointerup', endWindowPointer, { once: true });
+}
+
+function handleWindowPointerMove(event) {
+    if (!windowPointerMode || !windowPointerStart) return;
+    const dx = event.clientX - windowPointerStart.x;
+    const dy = event.clientY - windowPointerStart.y;
+    const base = windowPointerStart.geometry;
+    if (windowPointerMode === 'drag') {
+        windowGeometry = { ...base, x: base.x + dx, y: base.y + dy };
+    } else {
+        windowGeometry = { ...base, width: base.width + dx, height: base.height + dy };
+    }
+    applyWindowGeometry(false);
+}
+
+function endWindowPointer() {
+    window.removeEventListener('pointermove', handleWindowPointerMove);
+    windowPointerMode = null;
+    windowPointerStart = null;
+    applyWindowGeometry(true);
+}
+
 let streamSettings = {
     allowCustomUrls: false,
     maxUrlLength: 2048,
@@ -616,6 +704,8 @@ function showRadio(payload) {
         updateVolumeDisplay();
     }
 
+    windowGeometry = loadWindowGeometry();
+    applyWindowGeometry(false);
     radioShell.hidden = false;
     radioShell.setAttribute('aria-hidden', 'false');
     requestAnimationFrame(() => radioShell.classList.add('visible'));
@@ -1795,6 +1885,10 @@ document.addEventListener('keydown', (event) => {
 });
 
 closeButton.addEventListener('click', closeRadio);
+radioHeader.addEventListener('pointerdown', (event) => beginWindowPointer(event, 'drag'));
+windowResizeHandle.addEventListener('pointerdown', (event) => beginWindowPointer(event, 'resize'));
+resetWindowButton.addEventListener('click', (event) => { event.stopPropagation(); resetWindowGeometry(); });
+window.addEventListener('resize', () => { if (windowGeometry) applyWindowGeometry(true); });
 
 document.querySelectorAll('.tab-button').forEach((button) => {
     button.addEventListener('click', () => selectTab(button.dataset.tab));

@@ -8,7 +8,7 @@
 </head>
 <body>
     <main id="radio-shell" class="radio-shell" aria-hidden="true" hidden>
-        <section class="radio-panel" aria-label="ACG vehicle radio">
+        <section id="radio-panel" class="radio-panel" aria-label="ACG vehicle radio">
             <header class="radio-header">
                 <div class="brand">
                     <span class="brand-mark" aria-hidden="true">
@@ -21,11 +21,14 @@
                         <h1>ACG VEHICLE RADIO</h1>
                     </div>
                 </div>
-                <button id="close-button" class="icon-button close-button" type="button" aria-label="Close radio">
+                <div class="window-actions">
+                    <button id="reset-window-button" class="window-reset-button" type="button" title="Reset window position and size">RESET WINDOW</button>
+                    <button id="close-button" class="icon-button close-button" type="button" aria-label="Close radio">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M6 6l12 12M18 6L6 18"></path>
                     </svg>
-                </button>
+                    </button>
+                </div>
             </header>
 
             <div class="vehicle-strip">
