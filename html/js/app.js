@@ -764,21 +764,34 @@ function buildEntertainmentUrl(service, target) {
     return null;
 }
 
+window.addEventListener('message', (event) => {
+    const data = event.data;
+    if (!data || data.source !== 'agc-twitch-bridge') return;
+    console.log(`[AGC Entertainment] Bridge message: ${data.stage}${data.detail ? ` | ${data.detail}` : ''}`);
+});
+
 function loadEntertainment(service, target, preserveInput = false) {
+    console.log(`[AGC Entertainment] ${service.toUpperCase()} requested: ${target}`);
     const src = buildEntertainmentUrl(service, target);
     if (!src) {
         setStatus(`INVALID ${service.toUpperCase()} ${service === 'youtube' ? 'URL' : 'CHANNEL'}`, true, 5000);
         return false;
     }
 
+    if (service === 'twitch') console.log(`[AGC Entertainment] Bridge URL resolved: ${src}`);
     entertainmentScreen.innerHTML = '';
     const iframe = document.createElement('iframe');
+    if (service === 'twitch') console.log('[AGC Entertainment] Creating Twitch bridge iframe');
     iframe.className = 'entertainment-frame';
     iframe.src = src;
     iframe.title = `${service} entertainment player`;
     iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
     iframe.allowFullscreen = true;
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+    if (service === 'twitch') {
+        iframe.addEventListener('load', () => console.log('[AGC Entertainment] Twitch bridge iframe load event fired'));
+        iframe.addEventListener('error', (event) => console.error('[AGC Entertainment] Twitch bridge iframe error event fired', event));
+    }
     entertainmentScreen.appendChild(iframe);
 
     entertainmentService = service;
