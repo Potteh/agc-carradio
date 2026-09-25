@@ -1,56 +1,60 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>AGC Car Radio — Twitch</title>
-  <style>
-    html,body,#player{width:100%;height:100%;margin:0;background:#000;overflow:hidden}
-    #error{display:none;position:fixed;inset:0;align-items:center;justify-content:center;padding:32px;color:#fff;background:#0b0b0d;font:16px/1.5 system-ui,sans-serif;text-align:center}
-  </style>
-</head>
-<body>
-  <div id="player"></div>
-  <div id="error">Enter a valid Twitch channel.</div>
-  <script src="https://player.twitch.tv/js/embed/v1.js"></script>
-  <script>
-    (() => {
-      const params = new URLSearchParams(location.search);
-      let channel = (params.get('channel') || '').trim()
-        .replace(/^https?:\/\/(?:www\.)?twitch\.tv\//i, '')
-        .split(/[/?#]/)[0]
-        .replace(/[^A-Za-z0-9_]/g, '');
-
-      if (!channel) {
-        document.getElementById('player').style.display = 'none';
-        document.getElementById('error').style.display = 'flex';
-        return;
-      }
-
-      const muted = params.get('muted') === '1';
-      let player;\n      try {\n      player = new Twitch.Player('player', {
-        channel,
-        parent: ['potteh.github.io', 'cfx-nui-agc-carradio'],
-        width: '100%',
-        height: '100%',
-        autoplay: true,
-        muted
-      });
-
-      player.addEventListener(Twitch.Player.READY, () => { report('TWITCH_READY', channel); console.log('[AGC Twitch] READY', channel); });
-      player.addEventListener(Twitch.Player.PLAYING, () => { report('TWITCH_PLAYING', channel); console.log('[AGC Twitch] PLAYING', channel); });
-      player.addEventListener(Twitch.Player.PLAYBACK_BLOCKED, () => { report('TWITCH_BLOCKED', channel); console.warn('[AGC Twitch] PLAYBACK_BLOCKED', channel); });
-      player.addEventListener(Twitch.Player.OFFLINE, () => { report('TWITCH_OFFLINE', channel); console.warn('[AGC Twitch] OFFLINE', channel); });
-
-      window.addEventListener('message', (event) => {
-        if (!event.data || event.data.source !== 'agc-carradio') return;
-        if (event.data.action === 'mute') player.setMuted(true);
-        if (event.data.action === 'unmute') player.setMuted(false);
-        if (event.data.action === 'setVolume' && Number.isFinite(Number(event.data.volume))) {
-          player.setVolume(Math.max(0, Math.min(1, Number(event.data.volume))));
-        }
-      });
-    })();
-  </script>
-</body>
-</html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AGC Twitch Staged Diagnostic</title>
+<style>
+html,body,#player{width:100%;height:100%;margin:0;background:#0b0b0f;color:#fff;overflow:hidden;font-family:system-ui,sans-serif}
+#player{position:absolute;inset:0}
+#status{position:fixed;z-index:9999;left:12px;top:12px;max-width:calc(100% - 48px);padding:10px 12px;border:1px solid #9147ff;border-radius:8px;background:rgba(0,0,0,.82);font:13px/1.4 system-ui,sans-serif}
+</style></head><body>
+<div id="player"></div><div id="status">AGC Twitch diagnostic starting…</div>
+<script>
+(function(){
+ var status=document.getElementById('status');
+ var params=new URLSearchParams(location.search);
+ var channel=(params.get('channel')||'').trim().replace(/^https?:\/\/(?:www\.)?twitch\.tv\//i,'').split(/[/?#]/)[0].replace(/[^A-Za-z0-9_]/g,'');
+ var muted=params.get('muted')==='1';
+ function report(stage,detail){
+   detail=detail||'';
+   status.textContent='AGC Twitch: '+stage+(detail?' | '+detail:'');
+   try{window.parent.postMessage({source:'agc-twitch-bridge',stage:stage,detail:detail},'*');}catch(e){}
+ }
+ report('BRIDGE_LOADED',location.href);
+ report('DIAGNOSTIC_PAGE_RENDERED',channel||'invalid');
+ if(!channel){report('INVALID_CHANNEL');return;}
+ setTimeout(function(){
+   report('TWITCH_SCRIPT_INSERTING','https://player.twitch.tv/js/embed/v1.js');
+   var s=document.createElement('script');
+   s.src='https://player.twitch.tv/js/embed/v1.js';
+   s.async=true;
+   s.onerror=function(){report('TWITCH_SCRIPT_LOAD_ERROR',s.src);};
+   s.onload=function(){
+     report('TWITCH_SCRIPT_LOADED',typeof window.Twitch);
+     if(!window.Twitch||!window.Twitch.Player){report('TWITCH_PLAYER_API_MISSING');return;}
+     report('TWITCH_PLAYER_CREATE_START',channel);
+     var player;
+     try{
+       player=new window.Twitch.Player('player',{
+         channel:channel,
+         parent:['potteh.github.io','cfx-nui-agc-carradio'],
+         width:'100%',height:'100%',autoplay:true,muted:muted
+       });
+       report('TWITCH_PLAYER_CREATED',channel);
+     }catch(e){report('TWITCH_PLAYER_CREATE_ERROR',String(e&&e.stack||e));return;}
+     function bind(ev,name){try{player.addEventListener(ev,function(){report(name,channel);});}catch(e){report('EVENT_BIND_ERROR',name+': '+String(e));}}
+     bind(window.Twitch.Player.READY,'TWITCH_READY');
+     bind(window.Twitch.Player.PLAY,'TWITCH_PLAY');
+     bind(window.Twitch.Player.PLAYING,'TWITCH_PLAYING');
+     bind(window.Twitch.Player.PLAYBACK_BLOCKED,'TWITCH_BLOCKED');
+     bind(window.Twitch.Player.ONLINE,'TWITCH_ONLINE');
+     bind(window.Twitch.Player.OFFLINE,'TWITCH_OFFLINE');
+     bind(window.Twitch.Player.ENDED,'TWITCH_ENDED');
+     setTimeout(function(){
+       var frames=document.querySelectorAll('#player iframe');
+       report('TWITCH_IFRAME_CHECK_5S','iframes='+frames.length+(frames[0]?' src='+frames[0].src:''));
+     },5000);
+   };
+   document.head.appendChild(s);
+ },2000);
+})();
+</script></body></html>
