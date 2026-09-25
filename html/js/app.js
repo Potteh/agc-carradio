@@ -1885,9 +1885,9 @@ document.addEventListener('keydown', (event) => {
 });
 
 closeButton.addEventListener('click', closeRadio);
-radioHeader.addEventListener('pointerdown', (event) => beginWindowPointer(event, 'drag'));
-windowResizeHandle.addEventListener('pointerdown', (event) => beginWindowPointer(event, 'resize'));
-resetWindowButton.addEventListener('click', (event) => { event.stopPropagation(); resetWindowGeometry(); });
+if (radioHeader) radioHeader.addEventListener('pointerdown', (event) => beginWindowPointer(event, 'drag'));
+if (windowResizeHandle) windowResizeHandle.addEventListener('pointerdown', (event) => beginWindowPointer(event, 'resize'));
+if (resetWindowButton) resetWindowButton.addEventListener('click', (event) => { event.stopPropagation(); resetWindowGeometry(); });
 window.addEventListener('resize', () => { if (windowGeometry) applyWindowGeometry(true); });
 
 document.querySelectorAll('.tab-button').forEach((button) => {
