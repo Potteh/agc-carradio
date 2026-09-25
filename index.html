@@ -1,37 +1,57 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AGC Twitch Bridge Diagnostic</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AGC Car Radio — Twitch Diagnostic</title>
 <style>
-html,body{width:100%;height:100%;margin:0;background:#0b0b0f;color:#fff;font-family:system-ui,sans-serif}
-body{display:flex;align-items:center;justify-content:center}
-.card{width:min(680px,85%);padding:32px;border:2px solid #9147ff;border-radius:18px;background:#17131f;box-shadow:0 0 40px rgba(145,71,255,.25)}
-h1{margin:0 0 12px;font-size:28px}.ok{color:#7dff9b}.small{opacity:.75;margin-top:18px}code{color:#d8c2ff}
+html,body,#player{width:100%;height:100%;margin:0;background:#000;overflow:hidden}
+#status{position:fixed;z-index:9999;left:8px;top:8px;max-width:calc(100% - 16px);padding:6px 9px;border-radius:6px;background:rgba(0,0,0,.75);color:#fff;font:12px/1.35 system-ui,sans-serif;pointer-events:none}
 </style>
-</head>
-<body>
-<div class="card">
-<h1>AGC TWITCH BRIDGE</h1>
-<div class="ok">Bridge loaded successfully</div>
-<p>Channel: <strong id="channel">unknown</strong></p>
-<p>Testing communication with FiveM...</p>
-<div class="small">Diagnostic mode — Twitch player intentionally disabled.</div>
-</div>
+</head><body>
+<div id="player"></div><div id="status">AGC Twitch: bridge starting…</div>
 <script>
-(() => {
+(()=>{
  const params=new URLSearchParams(location.search);
- const channel=(params.get('channel')||'unknown').trim();
- document.getElementById('channel').textContent=channel;
+ const channel=(params.get('channel')||'').trim().replace(/^https?:\/\/(?:www\.)?twitch\.tv\//i,'').split(/[/?#]/)[0].replace(/[^A-Za-z0-9_]/g,'');
+ const muted=params.get('muted')==='1';
+ const status=document.getElementById('status');
  const report=(stage,detail='')=>{
-   try{window.parent.postMessage({source:'agc-twitch-bridge',stage,detail},'*');}catch(e){}
+   status.textContent='AGC Twitch: '+stage+(detail?' | '+detail:'');
+   try{window.parent.postMessage({source:'agc-twitch-bridge',stage,detail},'*')}catch(_){}
+   console.log('[AGC Twitch Bridge]',stage,detail);
  };
  report('BRIDGE_LOADED',location.href);
- report('DIAGNOSTIC_PAGE_RENDERED',channel);
- setTimeout(()=>report('DIAGNOSTIC_PING_1S',channel),1000);
- setTimeout(()=>report('DIAGNOSTIC_PING_3S',channel),3000);
+ if(!channel){report('INVALID_CHANNEL');return}
+ const s=document.createElement('script');
+ s.src='https://player.twitch.tv/js/embed/v1.js';
+ s.async=true;
+ s.onerror=()=>report('TWITCH_SCRIPT_LOAD_ERROR',s.src);
+ s.onload=()=>{
+   report('TWITCH_SCRIPT_LOADED',typeof window.Twitch);
+   if(!window.Twitch||!Twitch.Player){report('TWITCH_PLAYER_API_MISSING');return}
+   report('TWITCH_PLAYER_CREATE_START',channel);
+   let player;
+   try{
+     player=new Twitch.Player('player',{
+       channel,
+       parent:['potteh.github.io','cfx-nui-agc-carradio'],
+       width:'100%',height:'100%',autoplay:true,muted
+     });
+     report('TWITCH_PLAYER_CREATED',channel);
+   }catch(e){report('TWITCH_PLAYER_CREATE_ERROR',String(e&&e.stack||e));return}
+   const on=(ev,name)=>{try{player.addEventListener(ev,()=>report(name,channel))}catch(e){report('EVENT_BIND_ERROR',name+': '+e)}};
+   on(Twitch.Player.READY,'TWITCH_READY');
+   on(Twitch.Player.PLAY,'TWITCH_PLAY');
+   on(Twitch.Player.PLAYING,'TWITCH_PLAYING');
+   on(Twitch.Player.PLAYBACK_BLOCKED,'TWITCH_BLOCKED');
+   on(Twitch.Player.ONLINE,'TWITCH_ONLINE');
+   on(Twitch.Player.OFFLINE,'TWITCH_OFFLINE');
+   on(Twitch.Player.ENDED,'TWITCH_ENDED');
+   setTimeout(()=>{
+     const frames=document.querySelectorAll('#player iframe');
+     report('TWITCH_IFRAME_CHECK_5S','iframes='+frames.length+(frames[0]?' src='+frames[0].src:''));
+   },5000);
+ };
+ document.head.appendChild(s);
 })();
-</script>
-</body>
-</html>
+</script></body></html>
