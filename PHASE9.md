@@ -1,6 +1,6 @@
 # Phase 9 - Premium Infotainment Entertainment
 
-Adds a local passenger entertainment tab for YouTube video, Twitch live channels, and Kick live channels.
+Adds a local passenger entertainment tab for YouTube video and Kick live channels.
 
 - Entertainment playback is local to the player; it does not change the synchronized vehicle radio.
 - Starting entertainment locally ducks the synchronized radio to zero for that player and restores it when entertainment stops.
@@ -8,6 +8,5 @@ Adds a local passenger entertainment tab for YouTube video, Twitch live channels
 - Streamer Mode reloads the entertainment embed muted.
 - YouTube uses the official embed player.
 - Kick uses the official `player.kick.com/<channel>` embed.
-- Twitch routes through the public HTTPS bridge at `https://potteh.github.io/agc-carradio/`, which hosts the official Twitch player with `parent=potteh.github.io`. The FiveM NUI embeds that bridge instead of embedding `player.twitch.tv` directly.
 
 No new server dependency was added. Existing radio, queue, proximity, persistence, and admin APIs are unchanged.

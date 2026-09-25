@@ -708,7 +708,7 @@ function isValidStreamUrl(value) {
 }
 
 function setEntertainmentService(service) {
-    if (!['youtube', 'twitch', 'kick'].includes(service)) return;
+    if (!['youtube', 'kick', 'tiktok'].includes(service)) return;
     entertainmentService = service;
     document.querySelectorAll('.entertainment-service').forEach((button) => {
         button.classList.toggle('active', button.dataset.service === service);
@@ -716,8 +716,8 @@ function setEntertainmentService(service) {
 
     const labels = {
         youtube: ['YouTube video URL', 'https://www.youtube.com/watch?v=...'],
-        twitch: ['Twitch channel or URL', 'twitch.tv/channelname'],
-        kick: ['Kick channel or URL', 'kick.com/channelname']
+        kick: ['Kick channel or URL', 'kick.com/channelname'],
+        tiktok: ['TikTok video URL', 'https://www.tiktok.com/@creator/video/123456789...']
     };
     entertainmentInputLabel.textContent = labels[service][0];
     entertainmentInput.placeholder = labels[service][1];
@@ -731,10 +731,25 @@ function extractChannelName(value, service) {
     try {
         const url = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
         const host = url.hostname.toLowerCase().replace(/^www\./, '');
-        const allowed = service === 'twitch' ? ['twitch.tv', 'm.twitch.tv'] : ['kick.com'];
-        if (!allowed.includes(host)) return null;
+        if (service !== 'kick' || host !== 'kick.com') return null;
         const channel = url.pathname.split('/').filter(Boolean)[0] || '';
         return /^[A-Za-z0-9_\-]{2,64}$/.test(channel) ? channel : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+
+function extractTikTokPostId(value) {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (/^\d{10,24}$/.test(trimmed)) return trimmed;
+    try {
+        const url = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+        const host = url.hostname.toLowerCase().replace(/^www\./, '');
+        if (host !== 'tiktok.com' && host !== 'm.tiktok.com') return null;
+        const match = url.pathname.match(/\/video\/(\d{10,24})(?:\/|$)/);
+        return match ? match[1] : null;
     } catch (_) {
         return null;
     }
@@ -752,46 +767,30 @@ function buildEntertainmentUrl(service, target) {
         if (!channel) return null;
         return `https://player.kick.com/${encodeURIComponent(channel)}?autoplay=true&muted=${muted}`;
     }
-    if (service === 'twitch') {
-        const channel = extractChannelName(target, 'twitch');
-        if (!channel) return null;
-        // Twitch rejects FiveM's cfx-nui host as the embed parent. Route Twitch through
-        // our public HTTPS GitHub Pages bridge, which hosts the official Twitch player
-        // with parent=potteh.github.io. Keep the channel in the query string only.
-        const bridgeMuted = streamerMode ? '1' : '0';
-        return `https://potteh.github.io/agc-carradio/?channel=${encodeURIComponent(channel)}&muted=${bridgeMuted}`;
+    if (service === 'tiktok') {
+        const postId = extractTikTokPostId(target);
+        if (!postId) return null;
+        const mutedFlag = streamerMode ? '1' : '0';
+        return `https://www.tiktok.com/player/v1/${encodeURIComponent(postId)}?autoplay=1&controls=1&progress_bar=1&play_button=1&volume_control=1&fullscreen_button=1&description=1&rel=0&muted=${mutedFlag}`;
     }
     return null;
 }
 
-window.addEventListener('message', (event) => {
-    const data = event.data;
-    if (!data || data.source !== 'agc-twitch-bridge') return;
-    console.log(`[AGC Entertainment] Bridge message: ${data.stage}${data.detail ? ` | ${data.detail}` : ''}`);
-});
-
 function loadEntertainment(service, target, preserveInput = false) {
-    console.log(`[AGC Entertainment] ${service.toUpperCase()} requested: ${target}`);
     const src = buildEntertainmentUrl(service, target);
     if (!src) {
-        setStatus(`INVALID ${service.toUpperCase()} ${service === 'youtube' ? 'URL' : 'CHANNEL'}`, true, 5000);
+        setStatus(`INVALID ${service.toUpperCase()} ${service === 'kick' ? 'CHANNEL' : 'URL'}`, true, 5000);
         return false;
     }
 
-    if (service === 'twitch') console.log(`[AGC Entertainment] Bridge URL resolved: ${src}`);
     entertainmentScreen.innerHTML = '';
     const iframe = document.createElement('iframe');
-    if (service === 'twitch') console.log('[AGC Entertainment] Creating Twitch bridge iframe');
     iframe.className = 'entertainment-frame';
     iframe.src = src;
     iframe.title = `${service} entertainment player`;
     iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
     iframe.allowFullscreen = true;
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-    if (service === 'twitch') {
-        iframe.addEventListener('load', () => console.log('[AGC Entertainment] Twitch bridge iframe load event fired'));
-        iframe.addEventListener('error', (event) => console.error('[AGC Entertainment] Twitch bridge iframe error event fired', event));
-    }
     entertainmentScreen.appendChild(iframe);
 
     entertainmentService = service;
@@ -810,7 +809,7 @@ function stopEntertainment() {
     const placeholder = document.createElement('div');
     placeholder.id = 'entertainment-placeholder';
     placeholder.className = 'entertainment-placeholder';
-    placeholder.innerHTML = '<strong>ENTERTAINMENT READY</strong><span>Choose YouTube, Twitch, or Kick above.</span><small>Video playback is local to you and does not change the vehicle radio for other players.</small>';
+    placeholder.innerHTML = '<strong>ENTERTAINMENT READY</strong><span>Choose YouTube, Kick, or TikTok above.</span><small>Video playback is local to you and does not change the vehicle radio for other players.</small>';
     entertainmentScreen.appendChild(placeholder);
     entertainmentActive = false;
     entertainmentTarget = null;
