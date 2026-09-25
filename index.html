@@ -28,7 +28,7 @@
       }
 
       const muted = params.get('muted') === '1';
-      const player = new Twitch.Player('player', {
+      let player;\n      try {\n      player = new Twitch.Player('player', {
         channel,
         parent: ['potteh.github.io', 'cfx-nui-agc-carradio'],
         width: '100%',
@@ -37,10 +37,10 @@
         muted
       });
 
-      player.addEventListener(Twitch.Player.READY, () => console.log('[AGC Twitch] READY', channel));
-      player.addEventListener(Twitch.Player.PLAYING, () => console.log('[AGC Twitch] PLAYING', channel));
-      player.addEventListener(Twitch.Player.PLAYBACK_BLOCKED, () => console.warn('[AGC Twitch] PLAYBACK_BLOCKED', channel));
-      player.addEventListener(Twitch.Player.OFFLINE, () => console.warn('[AGC Twitch] OFFLINE', channel));
+      player.addEventListener(Twitch.Player.READY, () => { report('TWITCH_READY', channel); console.log('[AGC Twitch] READY', channel); });
+      player.addEventListener(Twitch.Player.PLAYING, () => { report('TWITCH_PLAYING', channel); console.log('[AGC Twitch] PLAYING', channel); });
+      player.addEventListener(Twitch.Player.PLAYBACK_BLOCKED, () => { report('TWITCH_BLOCKED', channel); console.warn('[AGC Twitch] PLAYBACK_BLOCKED', channel); });
+      player.addEventListener(Twitch.Player.OFFLINE, () => { report('TWITCH_OFFLINE', channel); console.warn('[AGC Twitch] OFFLINE', channel); });
 
       window.addEventListener('message', (event) => {
         if (!event.data || event.data.source !== 'agc-carradio') return;
